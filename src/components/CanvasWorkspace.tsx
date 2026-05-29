@@ -1,15 +1,34 @@
-import { useEffect, useRef } from "react";
-import type { UploadedImage } from "../types";
+import { useEffect, useRef, useState, type PointerEvent } from "react";
+import { getContainLayout } from "../core/maskUtils";
+import type { MaskPoint, MaskState, UploadedImage } from "../types";
 
 type CanvasWorkspaceProps = {
+  brushSize: number;
+  isMaskVisible: boolean;
+  maskOpacity: number;
+  maskState: MaskState | null;
+  onMaskStroke: (from: MaskPoint, to: MaskPoint, brushSizeInImagePixels: number) => void;
+  onMaskStrokeStart: () => void;
   selectedImage: UploadedImage | null;
 };
 
 const canvasWidth = 1440;
 const canvasHeight = 900;
 
-export function CanvasWorkspace({ selectedImage }: CanvasWorkspaceProps) {
+export function CanvasWorkspace({
+  brushSize,
+  isMaskVisible,
+  maskOpacity,
+  maskState,
+  onMaskStroke,
+  onMaskStrokeStart,
+  selectedImage
+}: CanvasWorkspaceProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const imageRef = useRef<HTMLImageElement | null>(null);
+  const imageUrlRef = useRef<string | null>(null);
+  const previousPointRef = useRef<MaskPoint | null>(null);
+  const [isDrawing, setIsDrawing] = useState(false);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -24,11 +43,53 @@ export function CanvasWorkspace({ selectedImage }: CanvasWorkspaceProps) {
       return;
     }
 
+    function drawPreview(image: HTMLImageElement) {
+      if (!canvas || !context || !selectedImage) {
+        return;
+      }
+
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+
+      const layout = getContainLayout(
+        canvas.width,
+        canvas.height,
+        selectedImage.width,
+        selectedImage.height
+      );
+
+      context.imageSmoothingEnabled = true;
+      context.imageSmoothingQuality = "high";
+      context.drawImage(image, layout.x, layout.y, layout.width, layout.height);
+
+      if (isMaskVisible && maskState) {
+        const maskCanvas = document.createElement("canvas");
+        maskCanvas.width = maskState.imageData.width;
+        maskCanvas.height = maskState.imageData.height;
+
+        const maskContext = maskCanvas.getContext("2d");
+
+        if (maskContext) {
+          maskContext.putImageData(maskState.imageData, 0, 0);
+          context.save();
+          context.globalAlpha = maskOpacity / 100;
+          context.drawImage(maskCanvas, layout.x, layout.y, layout.width, layout.height);
+          context.restore();
+        }
+      }
+    }
+
     context.clearRect(0, 0, canvas.width, canvas.height);
     context.fillStyle = "#ffffff";
     context.fillRect(0, 0, canvas.width, canvas.height);
 
     if (!selectedImage) {
+      return;
+    }
+
+    if (imageRef.current && imageUrlRef.current === selectedImage.url) {
+      drawPreview(imageRef.current);
       return;
     }
 
@@ -40,19 +101,9 @@ export function CanvasWorkspace({ selectedImage }: CanvasWorkspaceProps) {
         return;
       }
 
-      context.clearRect(0, 0, canvas.width, canvas.height);
-      context.fillStyle = "#ffffff";
-      context.fillRect(0, 0, canvas.width, canvas.height);
-
-      const scale = Math.min(canvas.width / image.naturalWidth, canvas.height / image.naturalHeight);
-      const drawWidth = image.naturalWidth * scale;
-      const drawHeight = image.naturalHeight * scale;
-      const offsetX = (canvas.width - drawWidth) / 2;
-      const offsetY = (canvas.height - drawHeight) / 2;
-
-      context.imageSmoothingEnabled = true;
-      context.imageSmoothingQuality = "high";
-      context.drawImage(image, offsetX, offsetY, drawWidth, drawHeight);
+      imageRef.current = image;
+      imageUrlRef.current = selectedImage.url;
+      drawPreview(image);
     };
 
     image.src = selectedImage.url;
@@ -60,7 +111,81 @@ export function CanvasWorkspace({ selectedImage }: CanvasWorkspaceProps) {
     return () => {
       isCancelled = true;
     };
-  }, [selectedImage]);
+  }, [isMaskVisible, maskOpacity, maskState, selectedImage]);
+
+  function getMaskPoint(event: PointerEvent<HTMLCanvasElement>) {
+    const canvas = canvasRef.current;
+
+    if (!canvas || !selectedImage) {
+      return null;
+    }
+
+    const rect = canvas.getBoundingClientRect();
+    const canvasX = ((event.clientX - rect.left) / rect.width) * canvas.width;
+    const canvasY = ((event.clientY - rect.top) / rect.height) * canvas.height;
+    const layout = getContainLayout(canvas.width, canvas.height, selectedImage.width, selectedImage.height);
+
+    if (
+      canvasX < layout.x ||
+      canvasX > layout.x + layout.width ||
+      canvasY < layout.y ||
+      canvasY > layout.y + layout.height
+    ) {
+      return null;
+    }
+
+    return {
+      brushSizeInImagePixels: Math.max(1, brushSize / layout.scale),
+      point: {
+        x: ((canvasX - layout.x) / layout.width) * selectedImage.width,
+        y: ((canvasY - layout.y) / layout.height) * selectedImage.height
+      }
+    };
+  }
+
+  function handlePointerDown(event: PointerEvent<HTMLCanvasElement>) {
+    if (event.button !== 0 || !selectedImage) {
+      return;
+    }
+
+    const maskPoint = getMaskPoint(event);
+
+    if (!maskPoint) {
+      return;
+    }
+
+    event.currentTarget.setPointerCapture(event.pointerId);
+    onMaskStrokeStart();
+    onMaskStroke(maskPoint.point, maskPoint.point, maskPoint.brushSizeInImagePixels);
+    previousPointRef.current = maskPoint.point;
+    setIsDrawing(true);
+  }
+
+  function handlePointerMove(event: PointerEvent<HTMLCanvasElement>) {
+    if (!isDrawing || !selectedImage) {
+      return;
+    }
+
+    const maskPoint = getMaskPoint(event);
+
+    if (!maskPoint) {
+      previousPointRef.current = null;
+      return;
+    }
+
+    const previousPoint = previousPointRef.current ?? maskPoint.point;
+    onMaskStroke(previousPoint, maskPoint.point, maskPoint.brushSizeInImagePixels);
+    previousPointRef.current = maskPoint.point;
+  }
+
+  function stopDrawing(event: PointerEvent<HTMLCanvasElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    previousPointRef.current = null;
+    setIsDrawing(false);
+  }
 
   return (
     <section className="flex min-h-0 flex-col rounded-lg border border-zinc-200 bg-white shadow-panel">
@@ -85,8 +210,15 @@ export function CanvasWorkspace({ selectedImage }: CanvasWorkspaceProps) {
         <div className="canvas-checker relative w-full max-w-4xl overflow-hidden rounded-lg border border-zinc-200 p-5">
           <canvas
             aria-label={selectedImage ? `当前图片预览：${selectedImage.fileName}` : "当前图片预览"}
-            className="block aspect-[16/10] w-full rounded-md border border-zinc-300 bg-white"
+            className={`block aspect-[16/10] w-full rounded-md border border-zinc-300 bg-white ${
+              selectedImage ? "cursor-crosshair touch-none" : ""
+            }`}
             height={canvasHeight}
+            onPointerCancel={stopDrawing}
+            onPointerDown={handlePointerDown}
+            onPointerLeave={stopDrawing}
+            onPointerMove={handlePointerMove}
+            onPointerUp={stopDrawing}
             ref={canvasRef}
             width={canvasWidth}
           />

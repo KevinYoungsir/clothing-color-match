@@ -9,13 +9,26 @@ import {
   isSupportedImageFile,
   loadImageFile
 } from "./core/imageLoader";
-import type { UploadedImage } from "./types";
+import {
+  clearMask,
+  createMaskState,
+  drawMaskStroke,
+  pushUndoSnapshot,
+  redoMask,
+  undoMask
+} from "./core/maskUtils";
+import type { MaskPoint, MaskState, MaskTool, UploadedImage } from "./types";
 
 export default function App() {
   const [referenceImage, setReferenceImage] = useState<UploadedImage | null>(null);
   const [sampleImages, setSampleImages] = useState<UploadedImage[]>([]);
   const [selectedSampleId, setSelectedSampleId] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [maskStates, setMaskStates] = useState<Record<string, MaskState>>({});
+  const [maskTool, setMaskTool] = useState<MaskTool>("brush");
+  const [brushSize, setBrushSize] = useState(32);
+  const [maskOpacity, setMaskOpacity] = useState(55);
+  const [isMaskVisible, setIsMaskVisible] = useState(true);
   const referenceImageRef = useRef<UploadedImage | null>(null);
   const sampleImagesRef = useRef<UploadedImage[]>([]);
 
@@ -23,6 +36,9 @@ export default function App() {
     () => sampleImages.find((image) => image.id === selectedSampleId) ?? null,
     [sampleImages, selectedSampleId]
   );
+  const selectedMaskState = selectedSampleId ? maskStates[selectedSampleId] ?? null : null;
+  const canUndoMask = (selectedMaskState?.undoStack.length ?? 0) > 0;
+  const canRedoMask = (selectedMaskState?.redoStack.length ?? 0) > 0;
 
   useEffect(() => {
     referenceImageRef.current = referenceImage;
@@ -92,11 +108,118 @@ export default function App() {
 
     if (loadedImages.length > 0) {
       setSampleImages((currentImages) => [...currentImages, ...loadedImages]);
+      setMaskStates((currentMasks) => {
+        const nextMasks = { ...currentMasks };
+
+        loadedImages.forEach((image) => {
+          nextMasks[image.id] = createMaskState(image.width, image.height);
+        });
+
+        return nextMasks;
+      });
       setSelectedSampleId((currentId) => currentId ?? loadedImages[0].id);
     }
 
     const messages = [...unsupportedMessages, ...failedMessages];
     setUploadError(messages.length > 0 ? messages.join("\n") : null);
+  }
+
+  function handleMaskStrokeStart() {
+    if (!selectedSample) {
+      return;
+    }
+
+    setMaskStates((currentMasks) => {
+      const currentMask =
+        currentMasks[selectedSample.id] ?? createMaskState(selectedSample.width, selectedSample.height);
+
+      return {
+        ...currentMasks,
+        [selectedSample.id]: pushUndoSnapshot(currentMask)
+      };
+    });
+  }
+
+  function handleMaskStroke(from: MaskPoint, to: MaskPoint, brushSizeInImagePixels: number) {
+    if (!selectedSample) {
+      return;
+    }
+
+    setMaskStates((currentMasks) => {
+      const currentMask =
+        currentMasks[selectedSample.id] ?? createMaskState(selectedSample.width, selectedSample.height);
+
+      return {
+        ...currentMasks,
+        [selectedSample.id]: {
+          ...currentMask,
+          imageData: drawMaskStroke(
+            currentMask.imageData,
+            from,
+            to,
+            brushSizeInImagePixels,
+            maskTool
+          )
+        }
+      };
+    });
+  }
+
+  function handleUndoMask() {
+    if (!selectedSampleId) {
+      return;
+    }
+
+    setMaskStates((currentMasks) => {
+      const currentMask = currentMasks[selectedSampleId];
+
+      if (!currentMask) {
+        return currentMasks;
+      }
+
+      return {
+        ...currentMasks,
+        [selectedSampleId]: undoMask(currentMask)
+      };
+    });
+  }
+
+  function handleRedoMask() {
+    if (!selectedSampleId) {
+      return;
+    }
+
+    setMaskStates((currentMasks) => {
+      const currentMask = currentMasks[selectedSampleId];
+
+      if (!currentMask) {
+        return currentMasks;
+      }
+
+      return {
+        ...currentMasks,
+        [selectedSampleId]: redoMask(currentMask)
+      };
+    });
+  }
+
+  function handleClearMask() {
+    if (!selectedSampleId) {
+      return;
+    }
+
+    setMaskStates((currentMasks) => {
+      const currentMask = currentMasks[selectedSampleId];
+
+      if (!currentMask) {
+        return currentMasks;
+      }
+
+      return {
+        ...currentMasks,
+        [selectedSampleId]: clearMask(currentMask)
+      };
+    });
   }
 
   return (
@@ -114,8 +237,31 @@ export default function App() {
             selectedSampleId={selectedSampleId}
             uploadError={uploadError}
           />
-          <CanvasWorkspace selectedImage={selectedSample} />
-          <AdjustmentPanel />
+          <CanvasWorkspace
+            brushSize={brushSize}
+            isMaskVisible={isMaskVisible}
+            maskOpacity={maskOpacity}
+            maskState={selectedMaskState}
+            onMaskStroke={handleMaskStroke}
+            onMaskStrokeStart={handleMaskStrokeStart}
+            selectedImage={selectedSample}
+          />
+          <AdjustmentPanel
+            brushSize={brushSize}
+            canRedoMask={canRedoMask}
+            canUndoMask={canUndoMask}
+            hasSelectedImage={Boolean(selectedSample)}
+            isMaskVisible={isMaskVisible}
+            maskOpacity={maskOpacity}
+            maskTool={maskTool}
+            onBrushSizeChange={setBrushSize}
+            onClearMask={handleClearMask}
+            onMaskOpacityChange={setMaskOpacity}
+            onMaskToolChange={setMaskTool}
+            onRedoMask={handleRedoMask}
+            onToggleMaskVisible={setIsMaskVisible}
+            onUndoMask={handleUndoMask}
+          />
         </section>
 
         <ExportBar />
