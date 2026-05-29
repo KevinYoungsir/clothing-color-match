@@ -20,6 +20,13 @@ import {
   undoMask
 } from "./core/maskUtils";
 import { transferLabColor } from "./core/colorTransfer";
+import {
+  applyImageAdjustments,
+  defaultAdjustmentParams,
+  isDefaultAdjustmentParams,
+  type AdjustmentKey,
+  type AdjustmentParams
+} from "./core/adjustment";
 import type { MaskEditMode, MaskPoint, MaskState, MaskTool, UploadedImage } from "./types";
 
 export default function App() {
@@ -39,7 +46,10 @@ export default function App() {
   const [highlightProtection, setHighlightProtection] = useState(35);
   const [maskFeather, setMaskFeather] = useState(4);
   const [processedImages, setProcessedImages] = useState<Record<string, ImageData>>({});
+  const [adjustedImages, setAdjustedImages] = useState<Record<string, ImageData>>({});
+  const [adjustmentParams, setAdjustmentParams] = useState<AdjustmentParams>(defaultAdjustmentParams);
   const [colorTransferError, setColorTransferError] = useState<string | null>(null);
+  const [adjustmentError, setAdjustmentError] = useState<string | null>(null);
   const [isColorTransferRunning, setIsColorTransferRunning] = useState(false);
   const referenceImageRef = useRef<UploadedImage | null>(null);
   const sampleImagesRef = useRef<UploadedImage[]>([]);
@@ -53,9 +63,69 @@ export default function App() {
   const activeMaskState = maskEditMode === "reference" ? referenceMaskState : selectedMaskState;
   const selectedProcessedImageData =
     maskEditMode === "target" && selectedSampleId ? processedImages[selectedSampleId] ?? null : null;
+  const selectedAdjustedImageData =
+    maskEditMode === "target" && selectedSampleId ? adjustedImages[selectedSampleId] ?? null : null;
+  const selectedPreviewImageData = selectedAdjustedImageData ?? selectedProcessedImageData;
   const canUndoMask = (activeMaskState?.undoStack.length ?? 0) > 0;
   const canRedoMask = (activeMaskState?.redoStack.length ?? 0) > 0;
   const canApplyColorTransfer = Boolean(referenceImage && selectedSample && selectedMaskState);
+
+  useEffect(() => {
+    if (!selectedSampleId || !selectedSample) {
+      setAdjustmentError(null);
+      return;
+    }
+
+    if (isDefaultAdjustmentParams(adjustmentParams)) {
+      setAdjustmentError(null);
+      setAdjustedImages((currentImages) => {
+        const { [selectedSampleId]: _removedImage, ...remainingImages } = currentImages;
+        return remainingImages;
+      });
+      return;
+    }
+
+    if (!selectedMaskState || !hasMaskPixels(selectedMaskState.imageData)) {
+      setAdjustmentError("请先绘制样品图衣服蒙版");
+      setAdjustedImages((currentImages) => {
+        const { [selectedSampleId]: _removedImage, ...remainingImages } = currentImages;
+        return remainingImages;
+      });
+      return;
+    }
+
+    let isCancelled = false;
+
+    loadImageDataFromUrl(selectedSample.url, selectedSample.width, selectedSample.height)
+      .then((originalImageData) => {
+        if (isCancelled) {
+          return;
+        }
+
+        const baseImageData = selectedProcessedImageData ?? originalImageData;
+        const adjustedImageData = applyImageAdjustments({
+          baseImageData,
+          originalImageData,
+          params: adjustmentParams,
+          targetMask: selectedMaskState.imageData
+        });
+
+        setAdjustedImages((currentImages) => ({
+          ...currentImages,
+          [selectedSampleId]: adjustedImageData
+        }));
+        setAdjustmentError(null);
+      })
+      .catch((error) => {
+        if (!isCancelled) {
+          setAdjustmentError(error instanceof Error ? error.message : "人工调整失败");
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [adjustmentParams, selectedMaskState, selectedProcessedImageData, selectedSample, selectedSampleId]);
 
   useEffect(() => {
     referenceImageRef.current = referenceImage;
@@ -100,8 +170,10 @@ export default function App() {
       setReferenceMaskState(createMaskState(image.width, image.height));
       setMaskEditMode("reference");
       setProcessedImages({});
+      setAdjustedImages({});
       setUploadError(null);
       setColorTransferError(null);
+      setAdjustmentError(null);
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : "标准图读取失败");
     }
@@ -140,6 +212,7 @@ export default function App() {
       });
       setSelectedSampleId((currentId) => currentId ?? loadedImages[0].id);
       setColorTransferError(null);
+      setAdjustmentError(null);
     }
 
     const messages = [...unsupportedMessages, ...failedMessages];
@@ -157,6 +230,7 @@ export default function App() {
       );
       setColorTransferError(null);
       setProcessedImages({});
+      setAdjustedImages({});
       return;
     }
 
@@ -178,6 +252,11 @@ export default function App() {
       const { [selectedSample.id]: _removedImage, ...remainingImages } = currentImages;
       return remainingImages;
     });
+    setAdjustedImages((currentImages) => {
+      const { [selectedSample.id]: _removedImage, ...remainingImages } = currentImages;
+      return remainingImages;
+    });
+    setAdjustmentError(null);
   }
 
   function handleMaskStroke(from: MaskPoint, to: MaskPoint, brushSizeInImagePixels: number) {
@@ -226,6 +305,7 @@ export default function App() {
       setReferenceMaskState((currentMask) => (currentMask ? undoMask(currentMask) : currentMask));
       setColorTransferError(null);
       setProcessedImages({});
+      setAdjustedImages({});
       return;
     }
 
@@ -250,6 +330,11 @@ export default function App() {
       const { [selectedSampleId]: _removedImage, ...remainingImages } = currentImages;
       return remainingImages;
     });
+    setAdjustedImages((currentImages) => {
+      const { [selectedSampleId]: _removedImage, ...remainingImages } = currentImages;
+      return remainingImages;
+    });
+    setAdjustmentError(null);
   }
 
   function handleRedoMask() {
@@ -257,6 +342,7 @@ export default function App() {
       setReferenceMaskState((currentMask) => (currentMask ? redoMask(currentMask) : currentMask));
       setColorTransferError(null);
       setProcessedImages({});
+      setAdjustedImages({});
       return;
     }
 
@@ -281,6 +367,11 @@ export default function App() {
       const { [selectedSampleId]: _removedImage, ...remainingImages } = currentImages;
       return remainingImages;
     });
+    setAdjustedImages((currentImages) => {
+      const { [selectedSampleId]: _removedImage, ...remainingImages } = currentImages;
+      return remainingImages;
+    });
+    setAdjustmentError(null);
   }
 
   function handleClearMask() {
@@ -288,6 +379,7 @@ export default function App() {
       setReferenceMaskState((currentMask) => (currentMask ? clearMask(currentMask) : currentMask));
       setColorTransferError(null);
       setProcessedImages({});
+      setAdjustedImages({});
       return;
     }
 
@@ -309,6 +401,47 @@ export default function App() {
     });
     setColorTransferError(null);
     setProcessedImages((currentImages) => {
+      const { [selectedSampleId]: _removedImage, ...remainingImages } = currentImages;
+      return remainingImages;
+    });
+    setAdjustedImages((currentImages) => {
+      const { [selectedSampleId]: _removedImage, ...remainingImages } = currentImages;
+      return remainingImages;
+    });
+    setAdjustmentError(null);
+  }
+
+  function handleAdjustmentParamChange(key: AdjustmentKey, value: number) {
+    if (!selectedSample) {
+      return;
+    }
+
+    if (!selectedMaskState || !hasMaskPixels(selectedMaskState.imageData)) {
+      setAdjustmentError("请先绘制样品图衣服蒙版");
+      setMaskEditMode("target");
+    }
+
+    setAdjustmentParams((currentParams) => ({
+      ...currentParams,
+      [key]: value
+    }));
+  }
+
+  function handleResetAdjustmentParam(key: AdjustmentKey) {
+    setAdjustmentParams((currentParams) => ({
+      ...currentParams,
+      [key]: defaultAdjustmentParams[key]
+    }));
+  }
+
+  function handleResetAllAdjustments() {
+    setAdjustmentParams(defaultAdjustmentParams);
+    setAdjustmentError(null);
+    setAdjustedImages((currentImages) => {
+      if (!selectedSampleId) {
+        return currentImages;
+      }
+
       const { [selectedSampleId]: _removedImage, ...remainingImages } = currentImages;
       return remainingImages;
     });
@@ -385,10 +518,12 @@ export default function App() {
             mode={maskEditMode}
             onMaskStroke={handleMaskStroke}
             onMaskStrokeStart={handleMaskStrokeStart}
-            processedImageData={selectedProcessedImageData}
+            processedImageData={selectedPreviewImageData}
             selectedImage={activeImage}
           />
           <AdjustmentPanel
+            adjustmentError={adjustmentError}
+            adjustmentParams={adjustmentParams}
             brushSize={brushSize}
             canApplyColorTransfer={canApplyColorTransfer}
             canRedoMask={canRedoMask}
@@ -409,11 +544,14 @@ export default function App() {
             onClearMask={handleClearMask}
             onHighlightProtectionChange={setHighlightProtection}
             onApplyColorTransfer={handleApplyColorTransfer}
+            onAdjustmentParamChange={handleAdjustmentParamChange}
             onMaskOpacityChange={setMaskOpacity}
             onMaskEditModeChange={setMaskEditMode}
             onMaskFeatherChange={setMaskFeather}
             onMaskToolChange={setMaskTool}
             onRedoMask={handleRedoMask}
+            onResetAdjustmentParam={handleResetAdjustmentParam}
+            onResetAllAdjustments={handleResetAllAdjustments}
             onShadowProtectionChange={setShadowProtection}
             onToggleMaskVisible={setIsMaskVisible}
             onUndoMask={handleUndoMask}

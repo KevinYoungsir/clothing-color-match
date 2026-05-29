@@ -1,6 +1,9 @@
+import type { AdjustmentKey, AdjustmentParams } from "../core/adjustment";
 import type { MaskEditMode, MaskTool } from "../types";
 
 type AdjustmentPanelProps = {
+  adjustmentError: string | null;
+  adjustmentParams: AdjustmentParams;
   brushSize: number;
   canApplyColorTransfer: boolean;
   canRedoMask: boolean;
@@ -19,6 +22,7 @@ type AdjustmentPanelProps = {
   onBrushSizeChange: (value: number) => void;
   onColorStrengthChange: (value: number) => void;
   onApplyColorTransfer: () => void;
+  onAdjustmentParamChange: (key: AdjustmentKey, value: number) => void;
   onClearMask: () => void;
   onHighlightProtectionChange: (value: number) => void;
   onMaskEditModeChange: (mode: MaskEditMode) => void;
@@ -26,24 +30,37 @@ type AdjustmentPanelProps = {
   onMaskOpacityChange: (value: number) => void;
   onMaskToolChange: (tool: MaskTool) => void;
   onRedoMask: () => void;
+  onResetAdjustmentParam: (key: AdjustmentKey) => void;
+  onResetAllAdjustments: () => void;
   onShadowProtectionChange: (value: number) => void;
   onToggleMaskVisible: (isVisible: boolean) => void;
   onUndoMask: () => void;
   shadowProtection: number;
 };
 
-const groups = [
-  {
-    title: "人工调整",
-    rows: ["亮度", "对比度", "饱和度", "色温"]
-  },
-  {
-    title: "蒙版",
-    rows: ["画笔大小", "透明度", "边缘羽化"]
-  }
+const adjustmentControls: Array<{
+  key: AdjustmentKey;
+  label: string;
+  max: number;
+  min: number;
+  suffix: string;
+}> = [
+  { key: "brightness", label: "亮度", max: 100, min: -100, suffix: "" },
+  { key: "contrast", label: "对比度", max: 100, min: -100, suffix: "" },
+  { key: "saturation", label: "饱和度", max: 100, min: -100, suffix: "" },
+  { key: "hue", label: "色相", max: 180, min: -180, suffix: "°" },
+  { key: "exposure", label: "曝光", max: 100, min: -100, suffix: "" },
+  { key: "shadows", label: "阴影", max: 100, min: -100, suffix: "" },
+  { key: "highlights", label: "高光", max: 100, min: -100, suffix: "" },
+  { key: "whiteBalance", label: "白平衡", max: 100, min: -100, suffix: "" },
+  { key: "temperature", label: "色温", max: 100, min: -100, suffix: "" },
+  { key: "colorStrength", label: "校色强度", max: 100, min: 0, suffix: "%" },
+  { key: "texturePreserve", label: "纹理保留强度", max: 100, min: 0, suffix: "%" }
 ];
 
 export function AdjustmentPanel({
+  adjustmentError,
+  adjustmentParams,
   brushSize,
   canApplyColorTransfer,
   canRedoMask,
@@ -62,6 +79,7 @@ export function AdjustmentPanel({
   onBrushSizeChange,
   onColorStrengthChange,
   onApplyColorTransfer,
+  onAdjustmentParamChange,
   onClearMask,
   onHighlightProtectionChange,
   onMaskEditModeChange,
@@ -69,6 +87,8 @@ export function AdjustmentPanel({
   onMaskOpacityChange,
   onMaskToolChange,
   onRedoMask,
+  onResetAdjustmentParam,
+  onResetAllAdjustments,
   onShadowProtectionChange,
   onToggleMaskVisible,
   onUndoMask,
@@ -89,7 +109,7 @@ export function AdjustmentPanel({
 
           <label className="mt-3 block">
             <span className="flex items-center justify-between text-xs font-medium text-zinc-500">
-              <span>校色强度</span>
+              <span>Lab 校色强度</span>
               <span>{colorStrength}%</span>
             </span>
             <input
@@ -167,26 +187,61 @@ export function AdjustmentPanel({
           </p>
         </section>
 
-        {groups.slice(0, 1).map((group) => (
-          <section key={group.title}>
-            <h3 className="text-sm font-semibold text-zinc-800">{group.title}</h3>
-            <div className="mt-3 space-y-3">
-              {group.rows.map((row) => (
-                <label className="block" key={row}>
-                  <span className="text-xs font-medium text-zinc-500">{row}</span>
-                  <input
-                    className="mt-2 h-2 w-full cursor-not-allowed appearance-none rounded-full bg-zinc-200 accent-teal-600"
-                    disabled
-                    max={100}
-                    min={0}
-                    type="range"
-                    defaultValue={50}
-                  />
-                </label>
-              ))}
-            </div>
-          </section>
-        ))}
+        <section>
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold text-zinc-800">人工调整</h3>
+            <button
+              className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-semibold text-zinc-600 disabled:cursor-not-allowed disabled:opacity-45"
+              disabled={!hasSelectedImage}
+              onClick={onResetAllAdjustments}
+              type="button"
+            >
+              全部重置
+            </button>
+          </div>
+
+          <div className="mt-3 space-y-4">
+            {adjustmentControls.map((control) => (
+              <label className="block" key={control.key}>
+                <span className="flex items-center justify-between gap-3 text-xs font-medium text-zinc-500">
+                  <span>{control.label}</span>
+                  <span className="flex items-center gap-2">
+                    <span>
+                      {adjustmentParams[control.key]}
+                      {control.suffix}
+                    </span>
+                    <button
+                      className="rounded border border-zinc-200 bg-white px-2 py-1 text-[11px] font-semibold text-zinc-500 disabled:cursor-not-allowed disabled:opacity-45"
+                      disabled={!hasSelectedImage}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        onResetAdjustmentParam(control.key);
+                      }}
+                      type="button"
+                    >
+                      重置
+                    </button>
+                  </span>
+                </span>
+                <input
+                  className="mt-2 h-2 w-full appearance-none rounded-full bg-zinc-200 accent-teal-600 disabled:cursor-not-allowed"
+                  disabled={!hasSelectedImage}
+                  max={control.max}
+                  min={control.min}
+                  onChange={(event) => onAdjustmentParamChange(control.key, Number(event.currentTarget.value))}
+                  type="range"
+                  value={adjustmentParams[control.key]}
+                />
+              </label>
+            ))}
+          </div>
+
+          {adjustmentError ? (
+            <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">
+              {adjustmentError}
+            </p>
+          ) : null}
+        </section>
 
         <section>
           <div className="flex items-center justify-between gap-3">
