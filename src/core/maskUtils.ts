@@ -42,6 +42,16 @@ export function createMaskState(width: number, height: number): MaskState {
   };
 }
 
+export function hasMaskPixels(imageData: ImageData) {
+  for (let index = 3; index < imageData.data.length; index += 4) {
+    if (imageData.data[index] > 0) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export function cloneImageData(imageData: ImageData) {
   return new ImageData(new Uint8ClampedArray(imageData.data), imageData.width, imageData.height);
 }

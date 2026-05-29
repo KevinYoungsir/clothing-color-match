@@ -9,6 +9,8 @@ export type UploadedImage = {
 
 export type MaskTool = "brush" | "eraser";
 
+export type MaskEditMode = "reference" | "target";
+
 export type MaskPoint = {
   x: number;
   y: number;

@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 import { getContainLayout } from "../core/maskUtils";
-import type { MaskPoint, MaskState, UploadedImage } from "../types";
+import type { MaskEditMode, MaskPoint, MaskState, UploadedImage } from "../types";
 
 type CanvasWorkspaceProps = {
   brushSize: number;
   isMaskVisible: boolean;
   maskOpacity: number;
   maskState: MaskState | null;
+  mode: MaskEditMode;
   onMaskStroke: (from: MaskPoint, to: MaskPoint, brushSizeInImagePixels: number) => void;
   onMaskStrokeStart: () => void;
+  processedImageData: ImageData | null;
   selectedImage: UploadedImage | null;
 };
 
@@ -20,8 +22,10 @@ export function CanvasWorkspace({
   isMaskVisible,
   maskOpacity,
   maskState,
+  mode,
   onMaskStroke,
   onMaskStrokeStart,
+  processedImageData,
   selectedImage
 }: CanvasWorkspaceProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -43,7 +47,7 @@ export function CanvasWorkspace({
       return;
     }
 
-    function drawPreview(image: HTMLImageElement) {
+    function drawPreview(source: CanvasImageSource) {
       if (!canvas || !context || !selectedImage) {
         return;
       }
@@ -61,7 +65,7 @@ export function CanvasWorkspace({
 
       context.imageSmoothingEnabled = true;
       context.imageSmoothingQuality = "high";
-      context.drawImage(image, layout.x, layout.y, layout.width, layout.height);
+      context.drawImage(source, layout.x, layout.y, layout.width, layout.height);
 
       if (isMaskVisible && maskState) {
         const maskCanvas = document.createElement("canvas");
@@ -88,6 +92,21 @@ export function CanvasWorkspace({
       return;
     }
 
+    if (processedImageData) {
+      const processedCanvas = document.createElement("canvas");
+      processedCanvas.width = processedImageData.width;
+      processedCanvas.height = processedImageData.height;
+
+      const processedContext = processedCanvas.getContext("2d");
+
+      if (processedContext) {
+        processedContext.putImageData(processedImageData, 0, 0);
+        drawPreview(processedCanvas);
+      }
+
+      return;
+    }
+
     if (imageRef.current && imageUrlRef.current === selectedImage.url) {
       drawPreview(imageRef.current);
       return;
@@ -111,7 +130,7 @@ export function CanvasWorkspace({
     return () => {
       isCancelled = true;
     };
-  }, [isMaskVisible, maskOpacity, maskState, selectedImage]);
+  }, [isMaskVisible, maskOpacity, maskState, processedImageData, selectedImage]);
 
   function getMaskPoint(event: PointerEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current;
@@ -192,7 +211,13 @@ export function CanvasWorkspace({
       <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3">
         <div>
           <p className="text-xs font-semibold uppercase text-rose-700">Preview</p>
-          <h2 className="mt-1 text-base font-semibold">画布预览</h2>
+          <h2 className="mt-1 text-base font-semibold">
+            {mode === "reference"
+              ? "标准图取色区域"
+              : processedImageData
+                ? "校色结果预览"
+                : "画布预览"}
+          </h2>
           {selectedImage ? (
             <p className="mt-1 max-w-[52vw] truncate text-xs text-zinc-500">
               {selectedImage.fileName} · {selectedImage.width} x {selectedImage.height}px
@@ -225,8 +250,12 @@ export function CanvasWorkspace({
           {!selectedImage ? (
             <div className="pointer-events-none absolute inset-5 grid place-items-center">
               <div className="rounded-md border border-zinc-200 bg-white px-4 py-3 text-center shadow-sm">
-                <p className="text-sm font-semibold text-zinc-700">未加载样品图</p>
-                <p className="mt-1 text-xs text-zinc-400">上传样品图后在这里预览</p>
+                <p className="text-sm font-semibold text-zinc-700">
+                  {mode === "reference" ? "未加载标准图" : "未加载样品图"}
+                </p>
+                <p className="mt-1 text-xs text-zinc-400">
+                  {mode === "reference" ? "上传标准图后在这里编辑取色区域" : "上传样品图后在这里预览"}
+                </p>
               </div>
             </div>
           ) : null}

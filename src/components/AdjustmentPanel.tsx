@@ -1,27 +1,38 @@
-import type { MaskTool } from "../types";
+import type { MaskEditMode, MaskTool } from "../types";
 
 type AdjustmentPanelProps = {
   brushSize: number;
+  canApplyColorTransfer: boolean;
   canRedoMask: boolean;
   canUndoMask: boolean;
+  colorStrength: number;
+  colorTransferError: string | null;
+  hasReferenceImage: boolean;
   hasSelectedImage: boolean;
+  highlightProtection: number;
   isMaskVisible: boolean;
+  isColorTransferRunning: boolean;
+  maskEditMode: MaskEditMode;
+  maskFeather: number;
   maskOpacity: number;
   maskTool: MaskTool;
   onBrushSizeChange: (value: number) => void;
+  onColorStrengthChange: (value: number) => void;
+  onApplyColorTransfer: () => void;
   onClearMask: () => void;
+  onHighlightProtectionChange: (value: number) => void;
+  onMaskEditModeChange: (mode: MaskEditMode) => void;
+  onMaskFeatherChange: (value: number) => void;
   onMaskOpacityChange: (value: number) => void;
   onMaskToolChange: (tool: MaskTool) => void;
   onRedoMask: () => void;
+  onShadowProtectionChange: (value: number) => void;
   onToggleMaskVisible: (isVisible: boolean) => void;
   onUndoMask: () => void;
+  shadowProtection: number;
 };
 
 const groups = [
-  {
-    title: "校色",
-    rows: ["强度", "高光保护", "阴影保护"]
-  },
   {
     title: "人工调整",
     rows: ["亮度", "对比度", "饱和度", "色温"]
@@ -34,20 +45,37 @@ const groups = [
 
 export function AdjustmentPanel({
   brushSize,
+  canApplyColorTransfer,
   canRedoMask,
   canUndoMask,
+  colorStrength,
+  colorTransferError,
+  hasReferenceImage,
   hasSelectedImage,
+  highlightProtection,
   isMaskVisible,
+  isColorTransferRunning,
+  maskEditMode,
+  maskFeather,
   maskOpacity,
   maskTool,
   onBrushSizeChange,
+  onColorStrengthChange,
+  onApplyColorTransfer,
   onClearMask,
+  onHighlightProtectionChange,
+  onMaskEditModeChange,
+  onMaskFeatherChange,
   onMaskOpacityChange,
   onMaskToolChange,
   onRedoMask,
+  onShadowProtectionChange,
   onToggleMaskVisible,
-  onUndoMask
+  onUndoMask,
+  shadowProtection
 }: AdjustmentPanelProps) {
+  const hasEditableImage = maskEditMode === "reference" ? hasReferenceImage : hasSelectedImage;
+
   return (
     <aside className="flex min-h-0 flex-col rounded-lg border border-zinc-200 bg-white shadow-panel">
       <div className="border-b border-zinc-200 p-4">
@@ -56,7 +84,90 @@ export function AdjustmentPanel({
       </div>
 
       <div className="min-h-0 flex-1 space-y-5 overflow-auto p-4">
-        {groups.slice(0, 2).map((group) => (
+        <section>
+          <h3 className="text-sm font-semibold text-zinc-800">自动校色</h3>
+
+          <label className="mt-3 block">
+            <span className="flex items-center justify-between text-xs font-medium text-zinc-500">
+              <span>校色强度</span>
+              <span>{colorStrength}%</span>
+            </span>
+            <input
+              className="mt-2 h-2 w-full appearance-none rounded-full bg-zinc-200 accent-teal-600 disabled:cursor-not-allowed"
+              max={100}
+              min={0}
+              onChange={(event) => onColorStrengthChange(Number(event.currentTarget.value))}
+              type="range"
+              value={colorStrength}
+            />
+          </label>
+
+          <label className="mt-4 block">
+            <span className="flex items-center justify-between text-xs font-medium text-zinc-500">
+              <span>阴影保护</span>
+              <span>{shadowProtection}%</span>
+            </span>
+            <input
+              className="mt-2 h-2 w-full appearance-none rounded-full bg-zinc-200 accent-teal-600 disabled:cursor-not-allowed"
+              max={100}
+              min={0}
+              onChange={(event) => onShadowProtectionChange(Number(event.currentTarget.value))}
+              type="range"
+              value={shadowProtection}
+            />
+          </label>
+
+          <label className="mt-4 block">
+            <span className="flex items-center justify-between text-xs font-medium text-zinc-500">
+              <span>高光保护</span>
+              <span>{highlightProtection}%</span>
+            </span>
+            <input
+              className="mt-2 h-2 w-full appearance-none rounded-full bg-zinc-200 accent-teal-600 disabled:cursor-not-allowed"
+              max={100}
+              min={0}
+              onChange={(event) => onHighlightProtectionChange(Number(event.currentTarget.value))}
+              type="range"
+              value={highlightProtection}
+            />
+          </label>
+
+          <label className="mt-4 block">
+            <span className="flex items-center justify-between text-xs font-medium text-zinc-500">
+              <span>蒙版羽化</span>
+              <span>{maskFeather}px</span>
+            </span>
+            <input
+              className="mt-2 h-2 w-full appearance-none rounded-full bg-zinc-200 accent-teal-600 disabled:cursor-not-allowed"
+              max={24}
+              min={0}
+              onChange={(event) => onMaskFeatherChange(Number(event.currentTarget.value))}
+              type="range"
+              value={maskFeather}
+            />
+          </label>
+
+          <button
+            className="mt-4 w-full rounded-md bg-teal-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-zinc-300"
+            disabled={!canApplyColorTransfer || isColorTransferRunning}
+            onClick={onApplyColorTransfer}
+            type="button"
+          >
+            {isColorTransferRunning ? "处理中..." : "自动校色"}
+          </button>
+
+          {colorTransferError ? (
+            <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">
+              {colorTransferError}
+            </p>
+          ) : null}
+
+          <p className="mt-3 rounded-md bg-zinc-50 px-3 py-2 text-xs text-zinc-500">
+            参考区域：标准图蒙版
+          </p>
+        </section>
+
+        {groups.slice(0, 1).map((group) => (
           <section key={group.title}>
             <h3 className="text-sm font-semibold text-zinc-800">{group.title}</h3>
             <div className="mt-3 space-y-3">
@@ -84,7 +195,7 @@ export function AdjustmentPanel({
               <input
                 checked={isMaskVisible}
                 className="accent-teal-600"
-                disabled={!hasSelectedImage}
+                disabled={!hasEditableImage}
                 onChange={(event) => onToggleMaskVisible(event.currentTarget.checked)}
                 type="checkbox"
               />
@@ -93,12 +204,28 @@ export function AdjustmentPanel({
           </div>
 
           <div className="mt-3 grid grid-cols-2 rounded-md border border-zinc-200 bg-zinc-50 p-1">
+            {(["reference", "target"] as const).map((mode) => (
+              <button
+                className={`rounded px-3 py-2 text-sm font-semibold ${
+                  maskEditMode === mode ? "bg-white text-teal-700 shadow-sm" : "text-zinc-500"
+                }`}
+                disabled={mode === "reference" ? !hasReferenceImage : !hasSelectedImage}
+                key={mode}
+                onClick={() => onMaskEditModeChange(mode)}
+                type="button"
+              >
+                {mode === "reference" ? "标准图取色" : "样品蒙版"}
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-3 grid grid-cols-2 rounded-md border border-zinc-200 bg-zinc-50 p-1">
             {(["brush", "eraser"] as const).map((tool) => (
               <button
                 className={`rounded px-3 py-2 text-sm font-semibold ${
                   maskTool === tool ? "bg-white text-teal-700 shadow-sm" : "text-zinc-500"
                 }`}
-                disabled={!hasSelectedImage}
+                disabled={!hasEditableImage}
                 key={tool}
                 onClick={() => onMaskToolChange(tool)}
                 type="button"
@@ -115,7 +242,7 @@ export function AdjustmentPanel({
             </span>
             <input
               className="mt-2 h-2 w-full appearance-none rounded-full bg-zinc-200 accent-teal-600 disabled:cursor-not-allowed"
-              disabled={!hasSelectedImage}
+              disabled={!hasEditableImage}
               max={120}
               min={4}
               onChange={(event) => onBrushSizeChange(Number(event.currentTarget.value))}
@@ -131,7 +258,7 @@ export function AdjustmentPanel({
             </span>
             <input
               className="mt-2 h-2 w-full appearance-none rounded-full bg-zinc-200 accent-teal-600 disabled:cursor-not-allowed"
-              disabled={!hasSelectedImage}
+              disabled={!hasEditableImage}
               max={100}
               min={10}
               onChange={(event) => onMaskOpacityChange(Number(event.currentTarget.value))}
@@ -143,7 +270,7 @@ export function AdjustmentPanel({
           <div className="mt-4 grid grid-cols-3 gap-2">
             <button
               className="rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm font-semibold text-zinc-700 disabled:cursor-not-allowed disabled:opacity-45"
-              disabled={!hasSelectedImage || !canUndoMask}
+              disabled={!hasEditableImage || !canUndoMask}
               onClick={onUndoMask}
               type="button"
             >
@@ -151,7 +278,7 @@ export function AdjustmentPanel({
             </button>
             <button
               className="rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm font-semibold text-zinc-700 disabled:cursor-not-allowed disabled:opacity-45"
-              disabled={!hasSelectedImage || !canRedoMask}
+              disabled={!hasEditableImage || !canRedoMask}
               onClick={onRedoMask}
               type="button"
             >
@@ -159,7 +286,7 @@ export function AdjustmentPanel({
             </button>
             <button
               className="rounded-md border border-rose-200 bg-rose-50 px-2 py-2 text-sm font-semibold text-rose-700 disabled:cursor-not-allowed disabled:opacity-45"
-              disabled={!hasSelectedImage}
+              disabled={!hasEditableImage}
               onClick={onClearMask}
               type="button"
             >
@@ -167,9 +294,11 @@ export function AdjustmentPanel({
             </button>
           </div>
 
-          {!hasSelectedImage ? (
+          {!hasEditableImage ? (
             <p className="mt-3 rounded-md bg-zinc-50 px-3 py-2 text-xs text-zinc-500">
-              上传并选择样品图后可以编辑蒙版。
+              {maskEditMode === "reference"
+                ? "上传标准图后可以选择衣服参考区域。"
+                : "上传并选择样品图后可以编辑蒙版。"}
             </p>
           ) : null}
         </section>

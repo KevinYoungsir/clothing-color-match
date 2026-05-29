@@ -7,28 +7,40 @@ import { TopToolbar } from "./components/TopToolbar";
 import {
   getUnsupportedImageMessage,
   isSupportedImageFile,
+  loadImageDataFromUrl,
   loadImageFile
 } from "./core/imageLoader";
 import {
   clearMask,
   createMaskState,
   drawMaskStroke,
+  hasMaskPixels,
   pushUndoSnapshot,
   redoMask,
   undoMask
 } from "./core/maskUtils";
-import type { MaskPoint, MaskState, MaskTool, UploadedImage } from "./types";
+import { transferLabColor } from "./core/colorTransfer";
+import type { MaskEditMode, MaskPoint, MaskState, MaskTool, UploadedImage } from "./types";
 
 export default function App() {
   const [referenceImage, setReferenceImage] = useState<UploadedImage | null>(null);
   const [sampleImages, setSampleImages] = useState<UploadedImage[]>([]);
   const [selectedSampleId, setSelectedSampleId] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [referenceMaskState, setReferenceMaskState] = useState<MaskState | null>(null);
   const [maskStates, setMaskStates] = useState<Record<string, MaskState>>({});
+  const [maskEditMode, setMaskEditMode] = useState<MaskEditMode>("target");
   const [maskTool, setMaskTool] = useState<MaskTool>("brush");
   const [brushSize, setBrushSize] = useState(32);
   const [maskOpacity, setMaskOpacity] = useState(55);
   const [isMaskVisible, setIsMaskVisible] = useState(true);
+  const [colorStrength, setColorStrength] = useState(70);
+  const [shadowProtection, setShadowProtection] = useState(35);
+  const [highlightProtection, setHighlightProtection] = useState(35);
+  const [maskFeather, setMaskFeather] = useState(4);
+  const [processedImages, setProcessedImages] = useState<Record<string, ImageData>>({});
+  const [colorTransferError, setColorTransferError] = useState<string | null>(null);
+  const [isColorTransferRunning, setIsColorTransferRunning] = useState(false);
   const referenceImageRef = useRef<UploadedImage | null>(null);
   const sampleImagesRef = useRef<UploadedImage[]>([]);
 
@@ -37,8 +49,13 @@ export default function App() {
     [sampleImages, selectedSampleId]
   );
   const selectedMaskState = selectedSampleId ? maskStates[selectedSampleId] ?? null : null;
-  const canUndoMask = (selectedMaskState?.undoStack.length ?? 0) > 0;
-  const canRedoMask = (selectedMaskState?.redoStack.length ?? 0) > 0;
+  const activeImage = maskEditMode === "reference" ? referenceImage : selectedSample;
+  const activeMaskState = maskEditMode === "reference" ? referenceMaskState : selectedMaskState;
+  const selectedProcessedImageData =
+    maskEditMode === "target" && selectedSampleId ? processedImages[selectedSampleId] ?? null : null;
+  const canUndoMask = (activeMaskState?.undoStack.length ?? 0) > 0;
+  const canRedoMask = (activeMaskState?.redoStack.length ?? 0) > 0;
+  const canApplyColorTransfer = Boolean(referenceImage && selectedSample && selectedMaskState);
 
   useEffect(() => {
     referenceImageRef.current = referenceImage;
@@ -80,7 +97,11 @@ export default function App() {
 
         return image;
       });
+      setReferenceMaskState(createMaskState(image.width, image.height));
+      setMaskEditMode("reference");
+      setProcessedImages({});
       setUploadError(null);
+      setColorTransferError(null);
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : "标准图读取失败");
     }
@@ -118,6 +139,7 @@ export default function App() {
         return nextMasks;
       });
       setSelectedSampleId((currentId) => currentId ?? loadedImages[0].id);
+      setColorTransferError(null);
     }
 
     const messages = [...unsupportedMessages, ...failedMessages];
@@ -125,6 +147,19 @@ export default function App() {
   }
 
   function handleMaskStrokeStart() {
+    if (maskEditMode === "reference") {
+      if (!referenceImage) {
+        return;
+      }
+
+      setReferenceMaskState((currentMask) =>
+        pushUndoSnapshot(currentMask ?? createMaskState(referenceImage.width, referenceImage.height))
+      );
+      setColorTransferError(null);
+      setProcessedImages({});
+      return;
+    }
+
     if (!selectedSample) {
       return;
     }
@@ -138,9 +173,30 @@ export default function App() {
         [selectedSample.id]: pushUndoSnapshot(currentMask)
       };
     });
+    setColorTransferError(null);
+    setProcessedImages((currentImages) => {
+      const { [selectedSample.id]: _removedImage, ...remainingImages } = currentImages;
+      return remainingImages;
+    });
   }
 
   function handleMaskStroke(from: MaskPoint, to: MaskPoint, brushSizeInImagePixels: number) {
+    if (maskEditMode === "reference") {
+      if (!referenceImage) {
+        return;
+      }
+
+      setReferenceMaskState((currentMask) => {
+        const mask = currentMask ?? createMaskState(referenceImage.width, referenceImage.height);
+
+        return {
+          ...mask,
+          imageData: drawMaskStroke(mask.imageData, from, to, brushSizeInImagePixels, maskTool)
+        };
+      });
+      return;
+    }
+
     if (!selectedSample) {
       return;
     }
@@ -166,6 +222,13 @@ export default function App() {
   }
 
   function handleUndoMask() {
+    if (maskEditMode === "reference") {
+      setReferenceMaskState((currentMask) => (currentMask ? undoMask(currentMask) : currentMask));
+      setColorTransferError(null);
+      setProcessedImages({});
+      return;
+    }
+
     if (!selectedSampleId) {
       return;
     }
@@ -182,9 +245,21 @@ export default function App() {
         [selectedSampleId]: undoMask(currentMask)
       };
     });
+    setColorTransferError(null);
+    setProcessedImages((currentImages) => {
+      const { [selectedSampleId]: _removedImage, ...remainingImages } = currentImages;
+      return remainingImages;
+    });
   }
 
   function handleRedoMask() {
+    if (maskEditMode === "reference") {
+      setReferenceMaskState((currentMask) => (currentMask ? redoMask(currentMask) : currentMask));
+      setColorTransferError(null);
+      setProcessedImages({});
+      return;
+    }
+
     if (!selectedSampleId) {
       return;
     }
@@ -201,9 +276,21 @@ export default function App() {
         [selectedSampleId]: redoMask(currentMask)
       };
     });
+    setColorTransferError(null);
+    setProcessedImages((currentImages) => {
+      const { [selectedSampleId]: _removedImage, ...remainingImages } = currentImages;
+      return remainingImages;
+    });
   }
 
   function handleClearMask() {
+    if (maskEditMode === "reference") {
+      setReferenceMaskState((currentMask) => (currentMask ? clearMask(currentMask) : currentMask));
+      setColorTransferError(null);
+      setProcessedImages({});
+      return;
+    }
+
     if (!selectedSampleId) {
       return;
     }
@@ -220,6 +307,59 @@ export default function App() {
         [selectedSampleId]: clearMask(currentMask)
       };
     });
+    setColorTransferError(null);
+    setProcessedImages((currentImages) => {
+      const { [selectedSampleId]: _removedImage, ...remainingImages } = currentImages;
+      return remainingImages;
+    });
+  }
+
+  async function handleApplyColorTransfer() {
+    if (!referenceImage || !selectedSample || !selectedMaskState) {
+      setColorTransferError("请先上传标准图、样品图，并绘制样品图蒙版");
+      return;
+    }
+
+    if (!referenceMaskState || !hasMaskPixels(referenceMaskState.imageData)) {
+      setColorTransferError("请先选择标准图衣服参考区域");
+      setMaskEditMode("reference");
+      return;
+    }
+
+    if (!hasMaskPixels(selectedMaskState.imageData)) {
+      setColorTransferError("请先在样品图衣服区域绘制蒙版");
+      setMaskEditMode("target");
+      return;
+    }
+
+    setIsColorTransferRunning(true);
+    setColorTransferError(null);
+
+    try {
+      const [referenceImageData, targetImageData] = await Promise.all([
+        loadImageDataFromUrl(referenceImage.url, referenceImage.width, referenceImage.height),
+        loadImageDataFromUrl(selectedSample.url, selectedSample.width, selectedSample.height)
+      ]);
+      const result = transferLabColor({
+        colorStrength,
+        highlightProtection,
+        maskFeather,
+        referenceImageData,
+        referenceMask: referenceMaskState.imageData,
+        shadowProtection,
+        targetImageData,
+        targetMask: selectedMaskState.imageData
+      });
+
+      setProcessedImages((currentImages) => ({
+        ...currentImages,
+        [selectedSample.id]: result.imageData
+      }));
+    } catch (error) {
+      setColorTransferError(error instanceof Error ? error.message : "自动校色失败");
+    } finally {
+      setIsColorTransferRunning(false);
+    }
   }
 
   return (
@@ -241,26 +381,43 @@ export default function App() {
             brushSize={brushSize}
             isMaskVisible={isMaskVisible}
             maskOpacity={maskOpacity}
-            maskState={selectedMaskState}
+            maskState={activeMaskState}
+            mode={maskEditMode}
             onMaskStroke={handleMaskStroke}
             onMaskStrokeStart={handleMaskStrokeStart}
-            selectedImage={selectedSample}
+            processedImageData={selectedProcessedImageData}
+            selectedImage={activeImage}
           />
           <AdjustmentPanel
             brushSize={brushSize}
+            canApplyColorTransfer={canApplyColorTransfer}
             canRedoMask={canRedoMask}
             canUndoMask={canUndoMask}
+            colorStrength={colorStrength}
+            colorTransferError={colorTransferError}
+            hasReferenceImage={Boolean(referenceImage)}
             hasSelectedImage={Boolean(selectedSample)}
+            highlightProtection={highlightProtection}
             isMaskVisible={isMaskVisible}
+            isColorTransferRunning={isColorTransferRunning}
+            maskEditMode={maskEditMode}
             maskOpacity={maskOpacity}
+            maskFeather={maskFeather}
             maskTool={maskTool}
             onBrushSizeChange={setBrushSize}
+            onColorStrengthChange={setColorStrength}
             onClearMask={handleClearMask}
+            onHighlightProtectionChange={setHighlightProtection}
+            onApplyColorTransfer={handleApplyColorTransfer}
             onMaskOpacityChange={setMaskOpacity}
+            onMaskEditModeChange={setMaskEditMode}
+            onMaskFeatherChange={setMaskFeather}
             onMaskToolChange={setMaskTool}
             onRedoMask={handleRedoMask}
+            onShadowProtectionChange={setShadowProtection}
             onToggleMaskVisible={setIsMaskVisible}
             onUndoMask={handleUndoMask}
+            shadowProtection={shadowProtection}
           />
         </section>
 

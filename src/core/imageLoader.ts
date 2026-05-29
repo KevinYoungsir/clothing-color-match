@@ -44,3 +44,31 @@ export function loadImageFile(file: File): Promise<UploadedImage> {
     image.src = url;
   });
 }
+
+export function loadImageDataFromUrl(url: string, width: number, height: number): Promise<ImageData> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+
+    image.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+
+      const context = canvas.getContext("2d");
+
+      if (!context) {
+        reject(new Error("无法创建图片处理画布"));
+        return;
+      }
+
+      context.drawImage(image, 0, 0, width, height);
+      resolve(context.getImageData(0, 0, width, height));
+    };
+
+    image.onerror = () => {
+      reject(new Error("无法读取图片像素"));
+    };
+
+    image.src = url;
+  });
+}
