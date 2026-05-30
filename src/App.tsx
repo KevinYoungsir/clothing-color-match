@@ -568,8 +568,10 @@ export default function App() {
   }
 
   function getAutoMaskNotice(label: string, result: AutoMaskResult) {
-    if (result.reason) {
-      return `${label}：${result.reason}`;
+    const message = result.warning ?? result.reason;
+
+    if (message) {
+      return `${label}：${message}`;
     }
 
     return null;
@@ -598,9 +600,30 @@ export default function App() {
   }
 
   function ensureMaskConfidence(label: string, result: AutoMaskResult) {
-    if (!hasMaskPixels(result.mask) || result.confidence < 0.25) {
-      throw new Error(`${label}自动识别失败，请点击编辑校色范围后手动修正蒙版`);
+    if (!hasMaskPixels(result.mask)) {
+      throw new Error(`${label}自动识别失败，请点击编辑校色范围手动修正。`);
     }
+
+    const hasUnsafeCoverage = result.coverageRatio > 0.65;
+    const hasUnsafeBorderTouch =
+      result.touchesBorderRatio > 0.26 ||
+      (result.coverageRatio > 0.5 && result.touchesBorderRatio > 0.16);
+
+    if (result.confidence < 0.45 || hasUnsafeCoverage || hasUnsafeBorderTouch) {
+      throw new Error(`${label}自动识别不确定，请点击编辑校色范围手动修正。`);
+    }
+  }
+
+  function enterMaskCorrectionMode(message: string) {
+    if (message.startsWith("标准图")) {
+      setMaskEditMode("reference");
+    } else if (message.startsWith("样品图")) {
+      setMaskEditMode("target");
+    }
+
+    setIsMaskEditingActive(true);
+    setIsMaskVisible(true);
+    setAutoMaskNotice(message);
   }
 
   function ensureReferenceMask(referenceImageData: ImageData) {
@@ -695,7 +718,9 @@ export default function App() {
       clearSampleResult(selectedSample.id);
       setAutoMaskNotice(getAutoMaskNotice("样品图", autoMaskResult));
     } catch (error) {
-      setAutoMaskNotice(error instanceof Error ? error.message : "自动识别失败，请手动修正蒙版");
+      const message = error instanceof Error ? error.message : "自动识别失败，请手动修正蒙版";
+
+      enterMaskCorrectionMode(message);
     }
   }
 
@@ -937,7 +962,13 @@ export default function App() {
       setIsMaskVisible(false);
       setAutoMaskNotice("已完成自动识别与校色，可点击编辑校色范围进行修正。");
     } catch (error) {
-      setColorTransferError(error instanceof Error ? error.message : "自动校色失败");
+      const message = error instanceof Error ? error.message : "自动校色失败";
+
+      setColorTransferError(message);
+
+      if (message.includes("自动识别不确定") || message.includes("自动识别失败")) {
+        enterMaskCorrectionMode(message);
+      }
     } finally {
       setIsColorTransferRunning(false);
     }

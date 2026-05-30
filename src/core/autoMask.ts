@@ -8,8 +8,11 @@ export type AutoMaskOptions = {
 export type AutoMaskResult = {
   mask: ImageData;
   confidence: number;
+  coverageRatio: number;
   foregroundRatio: number;
+  touchesBorderRatio: number;
   reason?: string;
+  warning?: string;
 };
 
 type RgbColor = {
@@ -44,6 +47,35 @@ function getMaskArea(mask: ImageData) {
   }
 
   return area;
+}
+
+function createEmptyMask(width: number, height: number) {
+  return new ImageData(width, height);
+}
+
+function getMaskCoverageRatio(mask: ImageData) {
+  return getMaskArea(mask) / getPixelCount(mask);
+}
+
+function getTouchesBorderRatio(mask: ImageData) {
+  const width = mask.width;
+  const height = mask.height;
+  let borderPixels = 0;
+  let touchedPixels = 0;
+
+  for (let x = 0; x < width; x += 1) {
+    touchedPixels += mask.data[getOffset(x, 0, width) + 3] > 0 ? 1 : 0;
+    touchedPixels += mask.data[getOffset(x, height - 1, width) + 3] > 0 ? 1 : 0;
+    borderPixels += 2;
+  }
+
+  for (let y = 1; y < height - 1; y += 1) {
+    touchedPixels += mask.data[getOffset(0, y, width) + 3] > 0 ? 1 : 0;
+    touchedPixels += mask.data[getOffset(width - 1, y, width) + 3] > 0 ? 1 : 0;
+    borderPixels += 2;
+  }
+
+  return borderPixels > 0 ? touchedPixels / borderPixels : 0;
 }
 
 function createMaskFromAlpha(width: number, height: number, alphaValues: Uint8ClampedArray) {
@@ -81,6 +113,36 @@ function getColorDistance(red: number, green: number, blue: number, background: 
   const blueDelta = blue - background.blue;
 
   return Math.sqrt(redDelta * redDelta + greenDelta * greenDelta + blueDelta * blueDelta);
+}
+
+function getLuminance(red: number, green: number, blue: number) {
+  return red * 0.2126 + green * 0.7152 + blue * 0.0722;
+}
+
+function getChannelSpread(red: number, green: number, blue: number) {
+  return Math.max(red, green, blue) - Math.min(red, green, blue);
+}
+
+function isLikelyNeutralBackgroundShadow(
+  red: number,
+  green: number,
+  blue: number,
+  background: RgbColor,
+  distance: number,
+  threshold: number
+) {
+  const backgroundSpread = getChannelSpread(background.red, background.green, background.blue);
+  const pixelSpread = getChannelSpread(red, green, blue);
+
+  if (backgroundSpread > 22 || pixelSpread > 24) {
+    return false;
+  }
+
+  const luminanceDelta = Math.abs(
+    getLuminance(red, green, blue) - getLuminance(background.red, background.green, background.blue)
+  );
+
+  return distance < threshold * 1.8 && luminanceDelta < 72;
 }
 
 function hasTransparentBackground(imageData: ImageData, alphaThreshold: number) {
@@ -186,7 +248,17 @@ export function createForegroundMaskByBackgroundDifference(
       background
     );
 
-    if (distance >= threshold) {
+    if (
+      distance >= threshold &&
+      !isLikelyNeutralBackgroundShadow(
+        imageData.data[dataIndex],
+        imageData.data[dataIndex + 1],
+        imageData.data[dataIndex + 2],
+        background,
+        distance,
+        threshold
+      )
+    ) {
       alphaValues[pixelIndex] = 255;
     }
   }
@@ -258,6 +330,72 @@ export function keepLargestConnectedComponent(mask: ImageData) {
   }
 
   return createMaskFromAlpha(width, height, new Uint8ClampedArray(largestComponent));
+}
+
+function removeBorderConnectedForeground(mask: ImageData) {
+  const width = mask.width;
+  const height = mask.height;
+  const pixelCount = width * height;
+  const visited = new Uint8Array(pixelCount);
+  const stack: number[] = [];
+  let removedArea = 0;
+
+  function addPixel(index: number) {
+    if (visited[index] || mask.data[index * 4 + 3] === 0) {
+      return;
+    }
+
+    visited[index] = 1;
+    stack.push(index);
+  }
+
+  for (let x = 0; x < width; x += 1) {
+    addPixel(x);
+    addPixel((height - 1) * width + x);
+  }
+
+  for (let y = 1; y < height - 1; y += 1) {
+    addPixel(y * width);
+    addPixel(y * width + width - 1);
+  }
+
+  while (stack.length > 0) {
+    const currentIndex = stack.pop()!;
+    const x = currentIndex % width;
+    const y = Math.floor(currentIndex / width);
+
+    removedArea += 1;
+
+    if (x > 0) {
+      addPixel(currentIndex - 1);
+    }
+
+    if (x < width - 1) {
+      addPixel(currentIndex + 1);
+    }
+
+    if (y > 0) {
+      addPixel(currentIndex - width);
+    }
+
+    if (y < height - 1) {
+      addPixel(currentIndex + width);
+    }
+  }
+
+  const alphaValues = new Uint8ClampedArray(pixelCount);
+
+  for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
+    alphaValues[pixelIndex] =
+      mask.data[pixelIndex * 4 + 3] > 0 && !visited[pixelIndex]
+        ? mask.data[pixelIndex * 4 + 3]
+        : 0;
+  }
+
+  return {
+    mask: createMaskFromAlpha(width, height, alphaValues),
+    removedArea
+  };
 }
 
 export function fillMaskHoles(mask: ImageData) {
@@ -400,30 +538,71 @@ export function generateAutoGarmentMask(
 ): AutoMaskResult {
   const alphaThreshold = options.alphaThreshold ?? 12;
   const minAreaRatio = options.minAreaRatio ?? 0.01;
+  const pixelCount = getPixelCount(imageData);
   const hasTransparentEdges = hasTransparentBackground(imageData, alphaThreshold);
   const initialMask = hasTransparentEdges
     ? createAlphaMaskFromTransparency(imageData, alphaThreshold)
     : createForegroundMaskByBackgroundDifference(imageData, options);
   const candidateArea = getMaskArea(initialMask);
-  const largestMask = keepLargestConnectedComponent(initialMask);
+  const candidateCoverageRatio = candidateArea / pixelCount;
+  const initialTouchesBorderRatio = getTouchesBorderRatio(initialMask);
+  const borderPrunedResult =
+    candidateCoverageRatio > 0.45 || initialTouchesBorderRatio > 0.16
+      ? removeBorderConnectedForeground(initialMask)
+      : null;
+  const borderPrunedArea = borderPrunedResult ? getMaskArea(borderPrunedResult.mask) : 0;
+  const shouldUseBorderPrunedMask = Boolean(
+    borderPrunedResult &&
+      borderPrunedArea / pixelCount >= minAreaRatio &&
+      borderPrunedArea >= candidateArea * 0.06 &&
+      borderPrunedArea < candidateArea
+  );
+  const foregroundMask = shouldUseBorderPrunedMask ? borderPrunedResult!.mask : initialMask;
+  const largestMask = keepLargestConnectedComponent(foregroundMask);
   const largestArea = getMaskArea(largestMask);
   const filledMask = fillMaskHoles(largestMask);
+  const filledArea = getMaskArea(filledMask);
   const softenedMask = softenMaskEdge(filledMask, options.feather ?? 2);
-  const foregroundRatio = largestArea / getPixelCount(imageData);
+  const foregroundRatio = largestArea / pixelCount;
+  const coverageRatio = filledArea / pixelCount;
+  const touchesBorderRatio = getTouchesBorderRatio(filledMask);
   const componentPurity = candidateArea > 0 ? largestArea / candidateArea : 0;
   const areaConfidence =
-    foregroundRatio < minAreaRatio || foregroundRatio > 0.92
-      ? 0.18
-      : foregroundRatio < 0.04 || foregroundRatio > 0.78
-        ? 0.48
-        : 0.82;
-  const sourceConfidence = hasTransparentEdges ? 0.94 : 0.72;
-  const confidence = clamp(sourceConfidence * areaConfidence * clamp(componentPurity, 0.35, 1), 0, 1);
+    coverageRatio < minAreaRatio || coverageRatio > 0.65
+      ? 0.14
+      : coverageRatio < 0.035 || coverageRatio > 0.52
+        ? 0.42
+        : 0.84;
+  const borderConfidence =
+    touchesBorderRatio > 0.32
+      ? 0.14
+      : touchesBorderRatio > 0.2
+        ? 0.34
+        : touchesBorderRatio > 0.12
+          ? 0.62
+          : 1;
+  const sourceConfidence = hasTransparentEdges ? 0.92 : 0.74;
+  const pruningConfidence = shouldUseBorderPrunedMask ? 0.92 : initialTouchesBorderRatio > 0.2 ? 0.72 : 1;
+  const confidence = clamp(
+    sourceConfidence * areaConfidence * borderConfidence * pruningConfidence * clamp(componentPurity, 0.3, 1),
+    0,
+    1
+  );
+  const shouldDiscardMask = coverageRatio > 0.82 || touchesBorderRatio > 0.48;
+  const warning =
+    largestArea === 0 || shouldDiscardMask
+      ? "自动识别失败，请手动绘制校色范围"
+      : confidence < 0.45
+        ? "自动识别不确定，请点击编辑校色范围手动修正。"
+        : undefined;
 
   return {
     confidence,
+    coverageRatio,
     foregroundRatio,
-    mask: softenedMask,
-    reason: confidence < 0.45 ? "自动识别不确定，请手动修正蒙版" : undefined
+    mask: shouldDiscardMask ? createEmptyMask(imageData.width, imageData.height) : softenedMask,
+    reason: warning,
+    touchesBorderRatio,
+    warning
   };
 }
