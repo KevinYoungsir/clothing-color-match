@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 import { getContainLayout } from "../core/maskUtils";
-import type { MaskEditMode, MaskPoint, MaskState, UploadedImage } from "../types";
+import type { MaskEditMode, MaskPoint, MaskState, MaskTool, UploadedImage } from "../types";
 
 type CompareMode = "single" | "sideBySide" | "split";
+type ZoomMode = "fit" | "actual" | "custom";
 
 type CanvasWorkspaceProps = {
   brushSize: number;
@@ -10,6 +11,7 @@ type CanvasWorkspaceProps = {
   isMaskVisible: boolean;
   maskOpacity: number;
   maskState: MaskState | null;
+  maskTool: MaskTool;
   mode: MaskEditMode;
   onMaskStroke: (from: MaskPoint, to: MaskPoint, brushSizeInImagePixels: number) => void;
   onMaskStrokeStart: () => void;
@@ -19,7 +21,12 @@ type CanvasWorkspaceProps = {
 
 const canvasWidth = 1440;
 const canvasHeight = 900;
-const zoomLevels = [1, 1.5, 2, 3];
+const minZoom = 0.35;
+const maxZoom = 4;
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
 
 export function CanvasWorkspace({
   brushSize,
@@ -27,6 +34,7 @@ export function CanvasWorkspace({
   isMaskVisible,
   maskOpacity,
   maskState,
+  maskTool,
   mode,
   onMaskStroke,
   onMaskStrokeStart,
@@ -34,15 +42,23 @@ export function CanvasWorkspace({
   selectedImage
 }: CanvasWorkspaceProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const canvasShellRef = useRef<HTMLDivElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const imageUrlRef = useRef<string | null>(null);
   const previousPointRef = useRef<MaskPoint | null>(null);
   const [compareMode, setCompareMode] = useState<CompareMode>("single");
+  const [zoomMode, setZoomMode] = useState<ZoomMode>("fit");
+  const [customZoom, setCustomZoom] = useState(1);
   const [isDrawing, setIsDrawing] = useState(false);
   const [isDraggingSplit, setIsDraggingSplit] = useState(false);
   const [isHoldingOriginal, setIsHoldingOriginal] = useState(false);
   const [splitPosition, setSplitPosition] = useState(50);
-  const [zoomIndex, setZoomIndex] = useState(0);
+  const [brushCursor, setBrushCursor] = useState({
+    radius: 0,
+    visible: false,
+    x: 0,
+    y: 0
+  });
 
   const isTargetMode = mode === "target";
   const canCompare = Boolean(isTargetMode && processedImageData && selectedImage);
@@ -50,7 +66,8 @@ export function CanvasWorkspace({
     isMaskEditingActive && selectedImage && (!isTargetMode || compareMode === "single")
   );
   const shouldDrawMaskOverlay = Boolean(isMaskEditingActive && isMaskVisible);
-  const zoom = zoomLevels[zoomIndex];
+  const zoomLabel =
+    zoomMode === "fit" ? "适合" : zoomMode === "actual" ? "100%" : `${Math.round(customZoom * 100)}%`;
   const previewTitle =
     mode === "reference"
       ? "标准图取色区域"
@@ -61,6 +78,28 @@ export function CanvasWorkspace({
           : processedImageData
             ? "校色结果预览"
             : "画布预览";
+
+  function getDrawZoom(layout: { scale: number }) {
+    if (zoomMode === "actual") {
+      return clamp(1 / layout.scale, minZoom, maxZoom);
+    }
+
+    if (zoomMode === "custom") {
+      return customZoom;
+    }
+
+    return 1;
+  }
+
+  function handleZoomOut() {
+    setZoomMode("custom");
+    setCustomZoom((currentZoom) => clamp(currentZoom / 1.25, minZoom, maxZoom));
+  }
+
+  function handleZoomIn() {
+    setZoomMode("custom");
+    setCustomZoom((currentZoom) => clamp(currentZoom * 1.25, minZoom, maxZoom));
+  }
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -132,8 +171,9 @@ export function CanvasWorkspace({
       }
 
       const layout = getContainLayout(rect.width, rect.height, selectedImage.width, selectedImage.height);
-      const drawWidth = layout.width * zoom;
-      const drawHeight = layout.height * zoom;
+      const drawZoom = getDrawZoom(layout);
+      const drawWidth = layout.width * drawZoom;
+      const drawHeight = layout.height * drawZoom;
       const drawX = rect.x + (rect.width - drawWidth) / 2;
       const drawY = rect.y + (rect.height - drawHeight) / 2;
 
@@ -303,7 +343,8 @@ export function CanvasWorkspace({
     processedImageData,
     selectedImage,
     splitPosition,
-    zoom
+    customZoom,
+    zoomMode
   ]);
 
   function getSplitPosition(event: PointerEvent<HTMLElement>) {
@@ -350,12 +391,13 @@ export function CanvasWorkspace({
     const canvasX = ((event.clientX - rect.left) / rect.width) * canvas.width;
     const canvasY = ((event.clientY - rect.top) / rect.height) * canvas.height;
     const baseLayout = getContainLayout(canvas.width, canvas.height, selectedImage.width, selectedImage.height);
+    const drawZoom = getDrawZoom(baseLayout);
     const layout = {
-      x: (canvas.width - baseLayout.width * zoom) / 2,
-      y: (canvas.height - baseLayout.height * zoom) / 2,
-      width: baseLayout.width * zoom,
-      height: baseLayout.height * zoom,
-      scale: baseLayout.scale * zoom
+      x: (canvas.width - baseLayout.width * drawZoom) / 2,
+      y: (canvas.height - baseLayout.height * drawZoom) / 2,
+      width: baseLayout.width * drawZoom,
+      height: baseLayout.height * drawZoom,
+      scale: baseLayout.scale * drawZoom
     };
 
     if (
@@ -368,12 +410,40 @@ export function CanvasWorkspace({
     }
 
     return {
-      brushSizeInImagePixels: Math.max(1, brushSize / layout.scale),
+      brushSizeInImagePixels: Math.max(1, brushSize),
       point: {
         x: ((canvasX - layout.x) / layout.width) * selectedImage.width,
         y: ((canvasY - layout.y) / layout.height) * selectedImage.height
-      }
+      },
+      screenRadiusInCssPixels: Math.max(
+        4,
+        (Math.max(1, brushSize) * layout.scale * (rect.width / canvas.width)) / 2
+      )
     };
+  }
+
+  function updateBrushCursor(event: PointerEvent<HTMLCanvasElement>) {
+    const canvas = canvasRef.current;
+    const shell = canvasShellRef.current;
+    const maskPoint = getMaskPoint(event);
+
+    if (!canvas || !shell || !maskPoint) {
+      setBrushCursor((currentCursor) =>
+        currentCursor.visible ? { ...currentCursor, visible: false } : currentCursor
+      );
+      return null;
+    }
+
+    const shellRect = shell.getBoundingClientRect();
+
+    setBrushCursor({
+      radius: maskPoint.screenRadiusInCssPixels,
+      visible: true,
+      x: event.clientX - shellRect.left,
+      y: event.clientY - shellRect.top
+    });
+
+    return maskPoint;
   }
 
   function handlePointerDown(event: PointerEvent<HTMLCanvasElement>) {
@@ -386,7 +456,7 @@ export function CanvasWorkspace({
       return;
     }
 
-    const maskPoint = getMaskPoint(event);
+    const maskPoint = updateBrushCursor(event);
 
     if (!maskPoint) {
       return;
@@ -400,11 +470,11 @@ export function CanvasWorkspace({
   }
 
   function handlePointerMove(event: PointerEvent<HTMLCanvasElement>) {
+    const maskPoint = updateBrushCursor(event);
+
     if (!isDrawing || !selectedImage) {
       return;
     }
-
-    const maskPoint = getMaskPoint(event);
 
     if (!maskPoint) {
       previousPointRef.current = null;
@@ -423,10 +493,14 @@ export function CanvasWorkspace({
 
     previousPointRef.current = null;
     setIsDrawing(false);
+
+    if (event.type === "pointerleave" || event.type === "pointercancel") {
+      setBrushCursor((currentCursor) => ({ ...currentCursor, visible: false }));
+    }
   }
 
   return (
-    <section className="flex min-h-0 flex-col rounded-lg border border-zinc-200 bg-white shadow-panel">
+    <section className="flex min-h-[620px] min-w-0 flex-col rounded-lg border border-zinc-200 bg-white shadow-panel">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3">
         <div>
           <p className="text-xs font-semibold uppercase text-rose-700">Preview</p>
@@ -463,20 +537,43 @@ export function CanvasWorkspace({
 
           <div className="flex items-center rounded-md border border-zinc-200 bg-zinc-50 p-1">
             <button
+              className={`rounded px-3 py-2 text-sm font-semibold ${
+                zoomMode === "fit" ? "bg-white text-teal-700 shadow-sm" : "text-zinc-600"
+              } disabled:cursor-not-allowed disabled:opacity-45`}
+              disabled={!selectedImage}
+              onClick={() => {
+                setZoomMode("fit");
+                setCustomZoom(1);
+              }}
+              type="button"
+            >
+              适合
+            </button>
+            <button
+              className={`rounded px-3 py-2 text-sm font-semibold ${
+                zoomMode === "actual" ? "bg-white text-teal-700 shadow-sm" : "text-zinc-600"
+              } disabled:cursor-not-allowed disabled:opacity-45`}
+              disabled={!selectedImage}
+              onClick={() => setZoomMode("actual")}
+              type="button"
+            >
+              100%
+            </button>
+            <button
               className="rounded px-3 py-2 text-sm font-semibold text-zinc-600 disabled:cursor-not-allowed disabled:opacity-45"
-              disabled={!selectedImage || zoomIndex === 0}
-              onClick={() => setZoomIndex((currentIndex) => Math.max(0, currentIndex - 1))}
+              disabled={!selectedImage}
+              onClick={handleZoomOut}
               type="button"
             >
               -
             </button>
             <span className="min-w-12 px-2 text-center text-sm font-semibold text-zinc-600">
-              {Math.round(zoom * 100)}%
+              {zoomLabel}
             </span>
             <button
               className="rounded px-3 py-2 text-sm font-semibold text-zinc-600 disabled:cursor-not-allowed disabled:opacity-45"
-              disabled={!selectedImage || zoomIndex === zoomLevels.length - 1}
-              onClick={() => setZoomIndex((currentIndex) => Math.min(zoomLevels.length - 1, currentIndex + 1))}
+              disabled={!selectedImage}
+              onClick={handleZoomIn}
               type="button"
             >
               +
@@ -485,11 +582,14 @@ export function CanvasWorkspace({
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 place-items-center p-6">
-        <div className="canvas-checker relative w-full max-w-4xl overflow-hidden rounded-lg border border-zinc-200 p-5">
+      <div className="flex min-h-0 flex-1 p-3">
+        <div
+          className="canvas-checker relative flex min-h-[520px] w-full flex-1 items-center justify-center overflow-hidden rounded-lg border border-zinc-200 p-3"
+          ref={canvasShellRef}
+        >
           <canvas
             aria-label={selectedImage ? `当前图片预览：${selectedImage.fileName}` : "当前图片预览"}
-            className={`block aspect-[16/10] w-full rounded-md border border-zinc-300 bg-white ${
+            className={`block h-full max-h-full w-auto max-w-full rounded-md border border-zinc-300 bg-white ${
               canEditMask ? "cursor-crosshair touch-none" : ""
             }`}
             height={canvasHeight}
@@ -502,8 +602,24 @@ export function CanvasWorkspace({
             width={canvasWidth}
           />
 
+          {brushCursor.visible && canEditMask ? (
+            <div
+              className={`pointer-events-none absolute rounded-full border-2 ${
+                maskTool === "eraser"
+                  ? "border-rose-500 bg-rose-500/10"
+                  : "border-teal-500 bg-teal-500/10"
+              }`}
+              style={{
+                height: brushCursor.radius * 2,
+                left: brushCursor.x - brushCursor.radius,
+                top: brushCursor.y - brushCursor.radius,
+                width: brushCursor.radius * 2
+              }}
+            />
+          ) : null}
+
           {canCompare && compareMode === "split" && !isHoldingOriginal ? (
-            <div className="pointer-events-none absolute inset-5">
+            <div className="pointer-events-none absolute inset-3">
               <div
                 aria-label="拖动分割线"
                 className="pointer-events-auto absolute top-0 h-full w-5 -translate-x-1/2 cursor-ew-resize"
@@ -521,7 +637,7 @@ export function CanvasWorkspace({
           ) : null}
 
           {!selectedImage ? (
-            <div className="pointer-events-none absolute inset-5 grid place-items-center">
+            <div className="pointer-events-none absolute inset-3 grid place-items-center">
               <div className="rounded-md border border-zinc-200 bg-white px-4 py-3 text-center shadow-sm">
                 <p className="text-sm font-semibold text-zinc-700">
                   {mode === "reference" ? "未加载标准图" : "未加载样品图"}
