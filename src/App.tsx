@@ -32,6 +32,7 @@ import {
   processBatchImages,
   processSampleImage,
   type AutoColorParams,
+  type BatchProcessResult,
   type BatchItemStatus,
   type ProcessedSampleResult
 } from "./core/batchProcessor";
@@ -43,6 +44,7 @@ import type {
   MaskRecognitionStatus,
   MaskState,
   MaskTool,
+  SampleProcessStatus,
   UploadedImage
 } from "./types";
 import {
@@ -64,6 +66,9 @@ export default function App() {
   const [referenceMaskStatus, setReferenceMaskStatus] =
     useState<MaskRecognitionStatus>("unrecognized");
   const [sampleMaskStatuses, setSampleMaskStatuses] = useState<Record<string, MaskRecognitionStatus>>({});
+  const [selectedSampleIds, setSelectedSampleIds] = useState<string[]>([]);
+  const [sampleProcessStatuses, setSampleProcessStatuses] = useState<Record<string, SampleProcessStatus>>({});
+  const [sampleProcessMessages, setSampleProcessMessages] = useState<Record<string, string>>({});
   const [colorCorrectionScope, setColorCorrectionScope] =
     useState<ColorCorrectionScope>("auto-garment");
   const [maskEditMode, setMaskEditMode] = useState<MaskEditMode>("target");
@@ -83,6 +88,9 @@ export default function App() {
   const [autoMaskNotice, setAutoMaskNotice] = useState<string | null>(null);
   const [adjustmentError, setAdjustmentError] = useState<string | null>(null);
   const [isColorTransferRunning, setIsColorTransferRunning] = useState(false);
+  const [isBatchColoring, setIsBatchColoring] = useState(false);
+  const [batchColorProgress, setBatchColorProgress] = useState<{ current: number; total: number } | null>(null);
+  const [batchColorMessage, setBatchColorMessage] = useState<string | null>(null);
   const [exportSize, setExportSize] = useState<ExportSize>("original");
   const [batchStatuses, setBatchStatuses] = useState<Record<string, BatchItemStatus>>({});
   const [exportMessage, setExportMessage] = useState<string | null>(null);
@@ -93,6 +101,11 @@ export default function App() {
   const selectedSample = useMemo(
     () => sampleImages.find((image) => image.id === selectedSampleId) ?? null,
     [sampleImages, selectedSampleId]
+  );
+  const selectedSampleIdSet = useMemo(() => new Set(selectedSampleIds), [selectedSampleIds]);
+  const selectedSamplesForBatch = useMemo(
+    () => sampleImages.filter((image) => selectedSampleIdSet.has(image.id)),
+    [sampleImages, selectedSampleIdSet]
   );
   const selectedMaskState = selectedSampleId ? maskStates[selectedSampleId] ?? null : null;
   const selectedSampleMaskStatus = selectedSampleId
@@ -246,11 +259,15 @@ export default function App() {
       setIsMaskVisible(false);
       setProcessedImages({});
       setAdjustedImages({});
+      setSampleProcessStatuses({});
+      setSampleProcessMessages({});
       setUploadError(null);
       setColorTransferError(null);
       setAutoMaskNotice(null);
       setAdjustmentError(null);
       setBatchStatuses({});
+      setBatchColorMessage(null);
+      setBatchColorProgress(null);
       setExportMessage(null);
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : "标准图读取失败");
@@ -297,6 +314,24 @@ export default function App() {
 
         return nextStatuses;
       });
+      setSampleProcessStatuses((currentStatuses) => {
+        const nextStatuses = { ...currentStatuses };
+
+        loadedImages.forEach((image) => {
+          nextStatuses[image.id] = "idle";
+        });
+
+        return nextStatuses;
+      });
+      setSampleProcessMessages((currentMessages) => {
+        const nextMessages = { ...currentMessages };
+
+        loadedImages.forEach((image) => {
+          delete nextMessages[image.id];
+        });
+
+        return nextMessages;
+      });
       setSelectedSampleId((currentId) => currentId ?? loadedImages[0].id);
       setMaskEditMode("target");
       setIsMaskEditingActive(false);
@@ -305,6 +340,8 @@ export default function App() {
       setAutoMaskNotice(null);
       setAdjustmentError(null);
       setBatchStatuses({});
+      setBatchColorMessage(null);
+      setBatchColorProgress(null);
       setExportMessage(null);
     }
 
@@ -628,6 +665,76 @@ export default function App() {
       const { [imageId]: _removedImage, ...remainingImages } = currentImages;
       return remainingImages;
     });
+    setSampleProcessStatuses((currentStatuses) => ({
+      ...currentStatuses,
+      [imageId]: selectedSampleIdSet.has(imageId) ? "selected" : "idle"
+    }));
+    setSampleProcessMessages((currentMessages) => {
+      const { [imageId]: _removedMessage, ...remainingMessages } = currentMessages;
+      return remainingMessages;
+    });
+  }
+
+  function handleSampleSelectionChange(imageId: string, isSelected: boolean) {
+    setSelectedSampleIds((currentIds) => {
+      if (isSelected) {
+        return currentIds.includes(imageId) ? currentIds : [...currentIds, imageId];
+      }
+
+      return currentIds.filter((id) => id !== imageId);
+    });
+
+    setSampleProcessStatuses((currentStatuses) => {
+      const currentStatus = currentStatuses[imageId];
+
+      if (!isSelected && currentStatus === "selected") {
+        return {
+          ...currentStatuses,
+          [imageId]: "idle"
+        };
+      }
+
+      if (isSelected && (!currentStatus || currentStatus === "idle")) {
+        return {
+          ...currentStatuses,
+          [imageId]: "selected"
+        };
+      }
+
+      return currentStatuses;
+    });
+  }
+
+  function handleSelectAllSamples() {
+    setSelectedSampleIds(sampleImages.map((image) => image.id));
+    setSampleProcessStatuses((currentStatuses) => {
+      const nextStatuses = { ...currentStatuses };
+
+      sampleImages.forEach((image) => {
+        const currentStatus = nextStatuses[image.id];
+
+        if (!currentStatus || currentStatus === "idle" || currentStatus === "selected") {
+          nextStatuses[image.id] = "selected";
+        }
+      });
+
+      return nextStatuses;
+    });
+  }
+
+  function handleClearSampleSelection() {
+    setSelectedSampleIds([]);
+    setSampleProcessStatuses((currentStatuses) => {
+      const nextStatuses = { ...currentStatuses };
+
+      sampleImages.forEach((image) => {
+        if (nextStatuses[image.id] === "selected" || nextStatuses[image.id] === "queued") {
+          nextStatuses[image.id] = "idle";
+        }
+      });
+
+      return nextStatuses;
+    });
   }
 
   function handleColorCorrectionScopeChange(scope: ColorCorrectionScope) {
@@ -637,7 +744,11 @@ export default function App() {
     setAdjustmentError(null);
     setProcessedImages({});
     setAdjustedImages({});
+    setSampleProcessStatuses({});
+    setSampleProcessMessages({});
     setBatchStatuses({});
+    setBatchColorMessage(null);
+    setBatchColorProgress(null);
     setExportMessage(null);
 
     if (scope === "full-image") {
@@ -902,6 +1013,24 @@ export default function App() {
 
       return nextStatuses;
     });
+    setSampleProcessStatuses((currentStatuses) => {
+      const nextStatuses = { ...currentStatuses };
+
+      results.forEach((result) => {
+        nextStatuses[result.image.id] = "done";
+      });
+
+      return nextStatuses;
+    });
+    setSampleProcessMessages((currentMessages) => {
+      const nextMessages = { ...currentMessages };
+
+      results.forEach((result) => {
+        nextMessages[result.image.id] = "已校色";
+      });
+
+      return nextMessages;
+    });
   }
 
   function setBatchStatus(status: BatchItemStatus) {
@@ -909,6 +1038,112 @@ export default function App() {
       ...currentStatuses,
       [status.imageId]: status
     }));
+    updateSampleProcessStatus(status);
+  }
+
+  function updateSampleProcessStatus(status: BatchItemStatus) {
+    setSampleProcessStatuses((currentStatuses) => ({
+      ...currentStatuses,
+      [status.imageId]: status.status
+    }));
+    setSampleProcessMessages((currentMessages) => ({
+      ...currentMessages,
+      [status.imageId]: status.message ?? status.status
+    }));
+  }
+
+  async function handleProcessSelectedSamples() {
+    if (selectedSamplesForBatch.length === 0) {
+      setBatchColorMessage("请先选择样品图");
+      return;
+    }
+
+    if (!referenceImage) {
+      setColorTransferError("请先上传标准图");
+      setBatchColorMessage("请先上传标准图");
+      return;
+    }
+
+    setIsBatchColoring(true);
+    setColorTransferError(null);
+    setAutoMaskNotice(null);
+    setAdjustmentError(null);
+    setBatchColorProgress({ current: 0, total: selectedSamplesForBatch.length });
+    setBatchColorMessage(`准备校色 ${selectedSamplesForBatch.length} 张样品`);
+
+    selectedSamplesForBatch.forEach((image) => {
+      const queuedStatus: BatchItemStatus = {
+        fileName: image.fileName,
+        imageId: image.id,
+        message: "等待",
+        status: "queued"
+      };
+
+      setBatchStatus(queuedStatus);
+    });
+
+    try {
+      const { referenceImageData, referenceMask } = await loadReferenceForProcessing();
+      let completedCount = 0;
+
+      const results = await processBatchImages({
+        adjustmentParams,
+        autoParams: autoColorParams,
+        autoMaskFeather: 2,
+        masks: maskStates,
+        onAutoMaskGenerated: (image, result) => {
+          storeAutoTargetMask(image, result);
+        },
+        onStatusChange: (status) => {
+          setBatchStatus(status);
+
+          if (status.status === "processing") {
+            setBatchColorProgress({
+              current: Math.min(completedCount + 1, selectedSamplesForBatch.length),
+              total: selectedSamplesForBatch.length
+            });
+            setBatchColorMessage(`正在处理 ${Math.min(completedCount + 1, selectedSamplesForBatch.length)} / ${selectedSamplesForBatch.length}`);
+            return;
+          }
+
+          completedCount += 1;
+          setBatchColorProgress({
+            current: completedCount,
+            total: selectedSamplesForBatch.length
+          });
+        },
+        referenceImageData,
+        referenceMask,
+        samples: selectedSamplesForBatch
+      });
+      const processedResults = results
+        .map((item) => item.result)
+        .filter((item): item is ProcessedSampleResult => Boolean(item));
+      const doneCount = results.filter((item) => item.status === "done").length;
+      const manualFixCount = results.filter((item) => item.status === "needs-manual-fix").length;
+      const missingMaskCount = results.filter((item) => item.status === "missing-mask").length;
+      const failedCount = results.filter((item) => item.status === "failed").length;
+
+      storeProcessedResults(processedResults);
+      setBatchColorMessage(
+        `一键校色完成：已校色 ${doneCount} 张，需手动修正 ${manualFixCount} 张，缺少蒙版 ${missingMaskCount} 张，失败 ${failedCount} 张。`
+      );
+
+      if (processedResults.length > 0 && !selectedSampleIdSet.has(selectedSampleId ?? "")) {
+        setSelectedSampleId(processedResults[0].image.id);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "一键批量校色失败";
+
+      setColorTransferError(message);
+      setBatchColorMessage(message);
+
+      if (message.includes("自动识别不确定") || message.includes("自动识别失败")) {
+        enterMaskCorrectionMode(message);
+      }
+    } finally {
+      setIsBatchColoring(false);
+    }
   }
 
   async function handleCurrentDownload() {
@@ -976,12 +1211,26 @@ export default function App() {
     }
 
     setIsExporting(true);
-    setExportMessage("正在读取标准图和参考区域");
+    setExportMessage("正在准备批量导出");
 
     try {
-      const { referenceImageData, referenceMask } = await loadReferenceForProcessing();
+      const existingResults = sampleImages
+        .map((image) => {
+          const finalImageData = adjustedImages[image.id] ?? processedImages[image.id] ?? null;
 
-      setExportMessage("正在批量处理样品图");
+          return finalImageData
+            ? {
+                finalImageData,
+                image
+              }
+            : null;
+        })
+        .filter((item): item is { finalImageData: ImageData; image: UploadedImage } => Boolean(item));
+      const existingResultIds = new Set(existingResults.map((item) => item.image.id));
+      const samplesToProcess = sampleImages.filter((image) => !existingResultIds.has(image.id));
+      let processedResults: ProcessedSampleResult[] = [];
+      let results: BatchProcessResult[] = [];
+
       setBatchStatuses(
         Object.fromEntries(
           sampleImages.map((image) => [
@@ -989,34 +1238,48 @@ export default function App() {
             {
               fileName: image.fileName,
               imageId: image.id,
-              message: "等待",
-              status: "queued"
+              message: existingResultIds.has(image.id) ? "使用已校色结果" : "等待",
+              status: existingResultIds.has(image.id) ? "done" : "queued"
             } satisfies BatchItemStatus
           ])
         )
       );
 
-      const results = await processBatchImages({
-        adjustmentParams,
-        autoParams: autoColorParams,
-        autoMaskFeather: 2,
-        masks: maskStates,
-        onAutoMaskGenerated: (image, result) => {
-          storeAutoTargetMask(image, result);
-        },
-        onStatusChange: setBatchStatus,
-        referenceImageData,
-        referenceMask,
-        samples: sampleImages
+      existingResults.forEach((item) => {
+        setBatchStatus({
+          fileName: item.image.fileName,
+          imageId: item.image.id,
+          message: "使用已校色结果",
+          status: "done"
+        });
       });
-      const processedResults = results
-        .map((item) => item.result)
-        .filter((item): item is ProcessedSampleResult => Boolean(item));
 
-      storeProcessedResults(processedResults);
+      if (samplesToProcess.length > 0) {
+        setExportMessage("正在批量处理未校色样品图");
+        const { referenceImageData, referenceMask } = await loadReferenceForProcessing();
+
+        results = await processBatchImages({
+          adjustmentParams,
+          autoParams: autoColorParams,
+          autoMaskFeather: 2,
+          masks: maskStates,
+          onAutoMaskGenerated: (image, result) => {
+            storeAutoTargetMask(image, result);
+          },
+          onStatusChange: setBatchStatus,
+          referenceImageData,
+          referenceMask,
+          samples: samplesToProcess
+        });
+        processedResults = results
+          .map((item) => item.result)
+          .filter((item): item is ProcessedSampleResult => Boolean(item));
+
+        storeProcessedResults(processedResults);
+      }
 
       const files = await Promise.all(
-        processedResults.map(async (result) => ({
+        [...existingResults, ...processedResults].map(async (result) => ({
           blob: await exportImageDataToJpegBlob(result.finalImageData, exportSize),
           name: getExportFileName(result.image.fileName, exportSize)
         }))
@@ -1029,10 +1292,13 @@ export default function App() {
       const zipBlob = await createZipBlob(files);
       const zipName = `colorfixed_${exportSize}.zip`;
       const skippedCount = results.filter((item) => item.status === "missing-mask").length;
+      const manualFixCount = results.filter((item) => item.status === "needs-manual-fix").length;
       const failedCount = results.filter((item) => item.status === "failed").length;
 
       downloadBlob(zipBlob, zipName);
-      setExportMessage(`已生成：${zipName}。成功 ${files.length} 张，缺少蒙版 ${skippedCount} 张，失败 ${failedCount} 张。`);
+      setExportMessage(
+        `已生成：${zipName}。成功 ${files.length} 张，需手动修正 ${manualFixCount} 张，缺少蒙版 ${skippedCount} 张，失败 ${failedCount} 张。`
+      );
     } catch (error) {
       setExportMessage(error instanceof Error ? error.message : "批量导出失败");
     } finally {
@@ -1107,12 +1373,20 @@ export default function App() {
 
         <section className="grid min-h-0 flex-1 grid-cols-1 gap-3 px-3 py-3 lg:grid-cols-[240px_minmax(0,1fr)_300px] xl:grid-cols-[260px_minmax(0,1fr)_320px]">
           <ImageSidebar
+            isBatchColoring={isBatchColoring}
+            onClearSampleSelection={handleClearSampleSelection}
+            onProcessSelectedSamples={handleProcessSelectedSamples}
             onReferenceUpload={handleReferenceUpload}
             onSampleSelect={setSelectedSampleId}
+            onSampleSelectionChange={handleSampleSelectionChange}
             onSampleUpload={handleSampleUpload}
+            onSelectAllSamples={handleSelectAllSamples}
             referenceImage={referenceImage}
             sampleImages={sampleImages}
             sampleMaskStatuses={sampleMaskStatuses}
+            sampleProcessMessages={sampleProcessMessages}
+            sampleProcessStatuses={sampleProcessStatuses}
+            selectedSampleIds={selectedSampleIds}
             selectedSampleId={selectedSampleId}
             uploadError={uploadError}
           />
@@ -1132,6 +1406,8 @@ export default function App() {
           <AdjustmentPanel
             adjustmentError={adjustmentError}
             adjustmentParams={adjustmentParams}
+            batchColorMessage={batchColorMessage}
+            batchColorProgress={batchColorProgress}
             brushSize={brushSize}
             canApplyColorTransfer={canApplyColorTransfer}
             canRedoMask={canRedoMask}
@@ -1147,6 +1423,7 @@ export default function App() {
             hasReferenceImage={Boolean(referenceImage)}
             hasSelectedImage={Boolean(selectedSample)}
             highlightProtection={highlightProtection}
+            isBatchColoring={isBatchColoring}
             isMaskVisible={isMaskVisible}
             isColorTransferRunning={isColorTransferRunning}
             maskEditMode={maskEditMode}

@@ -1,15 +1,23 @@
 import type { ChangeEvent } from "react";
-import type { MaskRecognitionStatus, UploadedImage } from "../types";
+import type { MaskRecognitionStatus, SampleProcessStatus, UploadedImage } from "../types";
 
 type ImageSidebarProps = {
   referenceImage: UploadedImage | null;
   sampleImages: UploadedImage[];
   sampleMaskStatuses: Record<string, MaskRecognitionStatus>;
+  sampleProcessMessages: Record<string, string>;
+  sampleProcessStatuses: Record<string, SampleProcessStatus>;
+  selectedSampleIds: string[];
   selectedSampleId: string | null;
   uploadError: string | null;
+  isBatchColoring: boolean;
+  onClearSampleSelection: () => void;
+  onProcessSelectedSamples: () => void;
   onReferenceUpload: (files: FileList | null) => void;
   onSampleUpload: (files: FileList | null) => void;
   onSampleSelect: (imageId: string) => void;
+  onSelectAllSamples: () => void;
+  onSampleSelectionChange: (imageId: string, isSelected: boolean) => void;
 };
 
 const acceptedImageTypes = "image/jpeg,image/png,image/webp";
@@ -27,16 +35,53 @@ const maskStatusClasses: Record<MaskRecognitionStatus, string> = {
   unrecognized: "bg-zinc-100 text-zinc-500"
 };
 
+const processStatusLabels: Record<SampleProcessStatus, string> = {
+  done: "已校色",
+  failed: "处理失败",
+  idle: "未处理",
+  "missing-mask": "缺少蒙版",
+  "needs-manual-fix": "需手动修正",
+  processing: "处理中",
+  queued: "等待",
+  "recognition-failed": "识别失败",
+  selected: "已选中"
+};
+
+const processStatusClasses: Record<SampleProcessStatus, string> = {
+  done: "bg-teal-50 text-teal-700",
+  failed: "bg-rose-50 text-rose-700",
+  idle: "bg-zinc-100 text-zinc-500",
+  "missing-mask": "bg-amber-50 text-amber-700",
+  "needs-manual-fix": "bg-orange-50 text-orange-700",
+  processing: "bg-sky-50 text-sky-700",
+  queued: "bg-zinc-100 text-zinc-500",
+  "recognition-failed": "bg-rose-50 text-rose-700",
+  selected: "bg-indigo-50 text-indigo-700"
+};
+
 export function ImageSidebar({
   referenceImage,
   sampleImages,
   sampleMaskStatuses,
+  sampleProcessMessages,
+  sampleProcessStatuses,
+  selectedSampleIds,
   selectedSampleId,
   uploadError,
+  isBatchColoring,
+  onClearSampleSelection,
+  onProcessSelectedSamples,
   onReferenceUpload,
   onSampleSelect,
+  onSelectAllSamples,
+  onSampleSelectionChange,
   onSampleUpload
 }: ImageSidebarProps) {
+  const selectedSampleIdSet = new Set(selectedSampleIds);
+  const selectedCount = selectedSampleIds.length;
+  const totalCount = sampleImages.length;
+  const isAllSelected = totalCount > 0 && selectedCount === totalCount;
+
   function handleReferenceChange(event: ChangeEvent<HTMLInputElement>) {
     onReferenceUpload(event.currentTarget.files);
     event.currentTarget.value = "";
@@ -94,6 +139,45 @@ export function ImageSidebar({
           </span>
         </div>
 
+        <div className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+          <label className="flex items-center justify-between gap-3 text-xs font-semibold text-zinc-700">
+            <span className="flex items-center gap-2">
+              <input
+                checked={isAllSelected}
+                className="accent-teal-600"
+                disabled={totalCount === 0 || isBatchColoring}
+                onChange={(event) =>
+                  event.currentTarget.checked ? onSelectAllSamples() : onClearSampleSelection()
+                }
+                type="checkbox"
+              />
+              全选
+            </span>
+            <span className="text-zinc-500">
+              已选择 {selectedCount} / 共 {totalCount} 张
+            </span>
+          </label>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <button
+              className="rounded-md border border-zinc-200 bg-white px-2 py-2 text-xs font-semibold text-zinc-600 disabled:cursor-not-allowed disabled:opacity-45"
+              disabled={totalCount === 0 || selectedCount === 0 || isBatchColoring}
+              onClick={onClearSampleSelection}
+              type="button"
+            >
+              取消全选
+            </button>
+            <button
+              className="rounded-md bg-teal-600 px-2 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-zinc-300"
+              disabled={selectedCount === 0 || isBatchColoring}
+              onClick={onProcessSelectedSamples}
+              title={selectedCount === 0 ? "请先选择样品图" : undefined}
+              type="button"
+            >
+              {isBatchColoring ? "校色中..." : "一键校色选中样品"}
+            </button>
+          </div>
+        </div>
+
         <label className="mt-3 flex cursor-pointer items-center justify-center rounded-md border border-dashed border-zinc-300 bg-zinc-50 px-3 py-3 text-sm font-semibold text-zinc-700 hover:border-teal-500 hover:text-teal-700">
           批量上传样品图
           <input
@@ -120,19 +204,28 @@ export function ImageSidebar({
 
           {sampleImages.map((image, index) => {
             const isSelected = image.id === selectedSampleId;
+            const isChecked = selectedSampleIdSet.has(image.id);
             const maskStatus = sampleMaskStatuses[image.id] ?? "unrecognized";
+            const processStatus = sampleProcessStatuses[image.id] ?? (isChecked ? "selected" : "idle");
+            const processMessage = sampleProcessMessages[image.id];
 
             return (
-              <button
-                className={`grid w-full grid-cols-[64px_1fr] gap-3 rounded-md border p-2 text-left transition ${
+              <div
+                className={`grid w-full grid-cols-[20px_64px_1fr] gap-3 rounded-md border p-2 text-left transition ${
                   isSelected
                     ? "border-teal-500 bg-teal-50"
                     : "border-zinc-200 bg-zinc-50 hover:border-zinc-300"
                 }`}
                 key={image.id}
-                onClick={() => onSampleSelect(image.id)}
-                type="button"
               >
+                <input
+                  aria-label={`选择样品 ${index + 1}`}
+                  checked={isChecked}
+                  className="mt-6 accent-teal-600"
+                  disabled={isBatchColoring}
+                  onChange={(event) => onSampleSelectionChange(image.id, event.currentTarget.checked)}
+                  type="checkbox"
+                />
                 <span className="grid aspect-square place-items-center overflow-hidden rounded border border-zinc-200 bg-white">
                   <img
                     alt={`样品图缩略图：${image.fileName}`}
@@ -140,23 +233,40 @@ export function ImageSidebar({
                     src={image.url}
                   />
                 </span>
-                <span className="flex min-w-0 flex-col justify-center">
+                <button
+                  className="flex min-w-0 flex-col justify-center text-left"
+                  onClick={() => onSampleSelect(image.id)}
+                  type="button"
+                >
                   <span className="flex items-center justify-between gap-2">
                     <span className="text-sm font-medium text-zinc-700">样品 {index + 1}</span>
-                    <span
-                      className={`shrink-0 rounded px-2 py-0.5 text-[11px] font-semibold ${
-                        maskStatusClasses[maskStatus]
-                      }`}
-                    >
-                      {maskStatusLabels[maskStatus]}
+                    <span className="flex shrink-0 flex-wrap justify-end gap-1">
+                      <span
+                        className={`rounded px-2 py-0.5 text-[11px] font-semibold ${
+                          processStatusClasses[processStatus]
+                        }`}
+                        title={processMessage}
+                      >
+                        {processStatusLabels[processStatus]}
+                      </span>
+                      <span
+                        className={`rounded px-2 py-0.5 text-[11px] font-semibold ${
+                          maskStatusClasses[maskStatus]
+                        }`}
+                      >
+                        {maskStatusLabels[maskStatus]}
+                      </span>
                     </span>
                   </span>
                   <span className="truncate text-xs text-zinc-500">{image.fileName}</span>
                   <span className="text-xs text-zinc-400">
                     {image.width} x {image.height}px
                   </span>
-                </span>
-              </button>
+                  {processMessage ? (
+                    <span className="truncate text-xs font-medium text-zinc-500">{processMessage}</span>
+                  ) : null}
+                </button>
+              </div>
             );
           })}
         </div>

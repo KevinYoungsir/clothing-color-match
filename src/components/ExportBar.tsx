@@ -21,6 +21,7 @@ const statusLabels: Record<BatchImageStatus, string> = {
   done: "已完成",
   failed: "失败",
   "missing-mask": "缺少蒙版",
+  "needs-manual-fix": "需手动修正",
   processing: "处理中",
   queued: "等待"
 };
@@ -29,6 +30,7 @@ const statusClasses: Record<BatchImageStatus, string> = {
   done: "border-emerald-200 bg-emerald-50 text-emerald-700",
   failed: "border-rose-200 bg-rose-50 text-rose-700",
   "missing-mask": "border-amber-200 bg-amber-50 text-amber-700",
+  "needs-manual-fix": "border-orange-200 bg-orange-50 text-orange-700",
   processing: "border-sky-200 bg-sky-50 text-sky-700",
   queued: "border-zinc-200 bg-zinc-50 text-zinc-500"
 };
@@ -40,9 +42,10 @@ function getStatusSummary(statuses: BatchItemStatus[]) {
 
   const doneCount = statuses.filter((item) => item.status === "done").length;
   const skippedCount = statuses.filter((item) => item.status === "missing-mask").length;
+  const manualFixCount = statuses.filter((item) => item.status === "needs-manual-fix").length;
   const failedCount = statuses.filter((item) => item.status === "failed").length;
 
-  return `已处理 ${doneCount} 张，缺少蒙版 ${skippedCount} 张，失败 ${failedCount} 张`;
+  return `已处理 ${doneCount} 张，需手动修正 ${manualFixCount} 张，缺少蒙版 ${skippedCount} 张，失败 ${failedCount} 张`;
 }
 
 export function ExportBar({

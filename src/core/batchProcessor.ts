@@ -7,7 +7,7 @@ import { generateAutoGarmentMask, type AutoMaskResult } from "./autoMask";
 import { transferLabColor } from "./colorTransfer";
 import { loadImageDataFromUrl } from "./imageLoader";
 import { hasMaskPixels } from "./maskUtils";
-import type { ColorCorrectionScope, MaskState, UploadedImage } from "../types";
+import type { ColorCorrectionScope, MaskState, SampleProcessStatus, UploadedImage } from "../types";
 
 export type AutoColorParams = {
   colorStrength: number;
@@ -17,7 +17,7 @@ export type AutoColorParams = {
   maskFeather: number;
 };
 
-export type BatchImageStatus = "queued" | "processing" | "done" | "missing-mask" | "failed";
+export type BatchImageStatus = Exclude<SampleProcessStatus, "idle" | "selected" | "recognition-failed">;
 
 export type BatchItemStatus = {
   imageId: string;
@@ -220,7 +220,7 @@ export async function processBatchImages({
         const autoMaskResult = generateAutoGarmentMask(originalImageData, { feather: autoMaskFeather });
 
         if (!isAutoMaskResultUsable(autoMaskResult, minAutoMaskConfidence)) {
-          const status = createStatus(sample, "missing-mask", "缺少蒙版 / 识别失败");
+          const status = createStatus(sample, "needs-manual-fix", "需手动修正");
           onStatusChange?.(status);
           results.push(status);
           continue;

@@ -6,6 +6,8 @@ type AdjustmentPanelProps = {
   adjustmentParams: AdjustmentParams;
   autoMaskNotice: string | null;
   brushSize: number;
+  batchColorMessage: string | null;
+  batchColorProgress: { current: number; total: number } | null;
   canApplyColorTransfer: boolean;
   canRedoMask: boolean;
   canUndoMask: boolean;
@@ -17,6 +19,7 @@ type AdjustmentPanelProps = {
   hasSelectedImage: boolean;
   highlightProtection: number;
   isMaskVisible: boolean;
+  isBatchColoring: boolean;
   isColorTransferRunning: boolean;
   maskEditMode: MaskEditMode;
   maskFeather: number;
@@ -100,6 +103,8 @@ export function AdjustmentPanel({
   adjustmentParams,
   autoMaskNotice,
   brushSize,
+  batchColorMessage,
+  batchColorProgress,
   canApplyColorTransfer,
   canRedoMask,
   canUndoMask,
@@ -111,6 +116,7 @@ export function AdjustmentPanel({
   hasSelectedImage,
   highlightProtection,
   isMaskVisible,
+  isBatchColoring,
   isColorTransferRunning,
   maskEditMode,
   maskFeather,
@@ -145,6 +151,8 @@ export function AdjustmentPanel({
   const canUseMaskControls = Boolean(hasEditableImage && !(isFullImageScope && maskEditMode === "target"));
   const applyButtonText = isColorTransferRunning
     ? "处理中..."
+    : isBatchColoring
+      ? "批量校色中..."
     : isFullImageScope
       ? hasColorResult
         ? "重新整图校色"
@@ -185,6 +193,7 @@ export function AdjustmentPanel({
                       ? "border-teal-500 bg-teal-50 text-teal-800"
                       : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300"
                   }`}
+                  disabled={isBatchColoring || isColorTransferRunning}
                   key={option.value}
                   onClick={() => onColorCorrectionScopeChange(option.value)}
                   type="button"
@@ -259,7 +268,7 @@ export function AdjustmentPanel({
 
           <button
             className="mt-4 w-full rounded-md bg-teal-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-zinc-300"
-            disabled={!canApplyColorTransfer || isColorTransferRunning}
+            disabled={!canApplyColorTransfer || isColorTransferRunning || isBatchColoring}
             onClick={onApplyColorTransfer}
             type="button"
           >
@@ -269,7 +278,7 @@ export function AdjustmentPanel({
           <div className="mt-2 grid grid-cols-2 gap-2">
             <button
               className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 disabled:cursor-not-allowed disabled:opacity-45"
-              disabled={!hasEditableImage || isColorTransferRunning || isFullImageScope || isManualMaskScope}
+              disabled={!hasEditableImage || isColorTransferRunning || isBatchColoring || isFullImageScope || isManualMaskScope}
               onClick={onRegenerateAutoMask}
               type="button"
             >
@@ -277,7 +286,7 @@ export function AdjustmentPanel({
             </button>
             <button
               className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 disabled:cursor-not-allowed disabled:opacity-45"
-              disabled={isFullImageScope || (!hasReferenceImage && !hasSelectedImage)}
+              disabled={isBatchColoring || isFullImageScope || (!hasReferenceImage && !hasSelectedImage)}
               onClick={onEditColorRange}
               type="button"
             >
@@ -294,6 +303,39 @@ export function AdjustmentPanel({
           {autoMaskNotice ? (
             <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
               {autoMaskNotice}
+            </p>
+          ) : null}
+
+          {batchColorProgress ? (
+            <div className="mt-3 rounded-md border border-sky-200 bg-sky-50 px-3 py-2">
+              <div className="flex items-center justify-between text-xs font-semibold text-sky-800">
+                <span>批量校色进度</span>
+                <span>
+                  {batchColorProgress.current} / {batchColorProgress.total}
+                </span>
+              </div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-sky-100">
+                <div
+                  className="h-full rounded-full bg-sky-500 transition-all"
+                  style={{
+                    width: `${Math.round(
+                      (batchColorProgress.current / Math.max(1, batchColorProgress.total)) * 100
+                    )}%`
+                  }}
+                />
+              </div>
+            </div>
+          ) : null}
+
+          {batchColorMessage ? (
+            <p
+              className={`mt-3 rounded-md border px-3 py-2 text-xs font-medium ${
+                isBatchColoring
+                  ? "border-sky-200 bg-sky-50 text-sky-800"
+                  : "border-zinc-200 bg-zinc-50 text-zinc-700"
+              }`}
+            >
+              {batchColorMessage}
             </p>
           ) : null}
 

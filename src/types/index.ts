@@ -15,6 +15,17 @@ export type MaskRecognitionStatus = "unrecognized" | "auto" | "manual" | "colore
 
 export type ColorCorrectionScope = "auto-garment" | "full-image" | "manual-mask";
 
+export type SampleProcessStatus =
+  | "idle"
+  | "selected"
+  | "queued"
+  | "processing"
+  | "done"
+  | "needs-manual-fix"
+  | "missing-mask"
+  | "recognition-failed"
+  | "failed";
+
 export type MaskPoint = {
   x: number;
   y: number;
