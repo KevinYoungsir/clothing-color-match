@@ -568,8 +568,8 @@ export default function App() {
   }
 
   function getAutoMaskNotice(label: string, result: AutoMaskResult) {
-    if (result.warning || result.reason) {
-      return `${label}：${result.warning ?? result.reason}`;
+    if (result.reason) {
+      return `${label}：${result.reason}`;
     }
 
     return null;
@@ -598,12 +598,7 @@ export default function App() {
   }
 
   function ensureMaskConfidence(label: string, result: AutoMaskResult) {
-    if (
-      !hasMaskPixels(result.mask) ||
-      result.confidence < 0.25 ||
-      result.coverageRatio > 0.65 ||
-      result.touchesBorderRatio > 0.3
-    ) {
+    if (!hasMaskPixels(result.mask) || result.confidence < 0.25) {
       throw new Error(`${label}自动识别失败，请点击编辑校色范围后手动修正蒙版`);
     }
   }
@@ -953,7 +948,7 @@ export default function App() {
       <div className="flex min-h-screen w-full flex-col">
         <TopToolbar />
 
-        <section className="grid min-h-0 flex-1 grid-cols-1 gap-3 px-3 py-3 lg:grid-cols-[240px_minmax(0,1fr)_300px] xl:grid-cols-[250px_minmax(0,1fr)_310px]">
+        <section className="grid min-h-0 flex-1 grid-cols-1 gap-4 px-4 py-4 lg:grid-cols-[280px_minmax(0,1fr)_320px]">
           <ImageSidebar
             onReferenceUpload={handleReferenceUpload}
             onSampleSelect={setSelectedSampleId}
@@ -970,7 +965,6 @@ export default function App() {
             isMaskVisible={isMaskVisible}
             maskOpacity={maskOpacity}
             maskState={activeMaskState}
-            maskTool={maskTool}
             mode={maskEditMode}
             onMaskStroke={handleMaskStroke}
             onMaskStrokeStart={handleMaskStrokeStart}

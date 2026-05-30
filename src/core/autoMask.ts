@@ -8,11 +8,8 @@ export type AutoMaskOptions = {
 export type AutoMaskResult = {
   mask: ImageData;
   confidence: number;
-  coverageRatio: number;
   foregroundRatio: number;
-  touchesBorderRatio: number;
   reason?: string;
-  warning?: string;
 };
 
 type RgbColor = {
@@ -47,27 +44,6 @@ function getMaskArea(mask: ImageData) {
   }
 
   return area;
-}
-
-function getTouchesBorderRatio(mask: ImageData) {
-  const width = mask.width;
-  const height = mask.height;
-  let borderPixels = 0;
-  let touchedPixels = 0;
-
-  for (let x = 0; x < width; x += 1) {
-    touchedPixels += mask.data[getOffset(x, 0, width) + 3] > 0 ? 1 : 0;
-    touchedPixels += mask.data[getOffset(x, height - 1, width) + 3] > 0 ? 1 : 0;
-    borderPixels += 2;
-  }
-
-  for (let y = 1; y < height - 1; y += 1) {
-    touchedPixels += mask.data[getOffset(0, y, width) + 3] > 0 ? 1 : 0;
-    touchedPixels += mask.data[getOffset(width - 1, y, width) + 3] > 0 ? 1 : 0;
-    borderPixels += 2;
-  }
-
-  return borderPixels > 0 ? touchedPixels / borderPixels : 0;
 }
 
 function createMaskFromAlpha(width: number, height: number, alphaValues: Uint8ClampedArray) {
@@ -284,101 +260,6 @@ export function keepLargestConnectedComponent(mask: ImageData) {
   return createMaskFromAlpha(width, height, new Uint8ClampedArray(largestComponent));
 }
 
-function selectGarmentLikeComponent(mask: ImageData, minAreaRatio: number) {
-  const width = mask.width;
-  const height = mask.height;
-  const pixelCount = width * height;
-  const visited = new Uint8Array(pixelCount);
-  let bestComponent: number[] = [];
-  let bestScore = -Infinity;
-  let bestTouchesBorder = false;
-  let bestBorderTouchCount = 0;
-
-  for (let startIndex = 0; startIndex < pixelCount; startIndex += 1) {
-    if (visited[startIndex] || mask.data[startIndex * 4 + 3] === 0) {
-      continue;
-    }
-
-    const stack = [startIndex];
-    const component: number[] = [];
-    let minX = width;
-    let minY = height;
-    let maxX = 0;
-    let maxY = 0;
-    let borderTouchCount = 0;
-    visited[startIndex] = 1;
-
-    while (stack.length > 0) {
-      const currentIndex = stack.pop()!;
-      const x = currentIndex % width;
-      const y = Math.floor(currentIndex / width);
-      const touchesBorder = x === 0 || y === 0 || x === width - 1 || y === height - 1;
-
-      component.push(currentIndex);
-      minX = Math.min(minX, x);
-      minY = Math.min(minY, y);
-      maxX = Math.max(maxX, x);
-      maxY = Math.max(maxY, y);
-      borderTouchCount += touchesBorder ? 1 : 0;
-
-      for (let yOffset = -1; yOffset <= 1; yOffset += 1) {
-        for (let xOffset = -1; xOffset <= 1; xOffset += 1) {
-          if (xOffset === 0 && yOffset === 0) {
-            continue;
-          }
-
-          const nextX = x + xOffset;
-          const nextY = y + yOffset;
-
-          if (nextX < 0 || nextX >= width || nextY < 0 || nextY >= height) {
-            continue;
-          }
-
-          const neighborIndex = nextY * width + nextX;
-
-          if (!visited[neighborIndex] && mask.data[neighborIndex * 4 + 3] > 0) {
-            visited[neighborIndex] = 1;
-            stack.push(neighborIndex);
-          }
-        }
-      }
-    }
-
-    const areaRatio = component.length / pixelCount;
-
-    if (areaRatio < minAreaRatio * 0.25) {
-      continue;
-    }
-
-    const centerX = (minX + maxX) / 2 / width;
-    const centerY = (minY + maxY) / 2 / height;
-    const centerDistance = Math.hypot(centerX - 0.5, centerY - 0.52);
-    const borderPenalty = borderTouchCount > 0 ? 0.42 : 1;
-    const coveragePenalty = areaRatio > 0.65 ? 0.18 : areaRatio > 0.5 ? 0.55 : 1;
-    const centerScore = clamp(1 - centerDistance, 0.1, 1);
-    const score = component.length * borderPenalty * coveragePenalty * centerScore;
-
-    if (score > bestScore) {
-      bestComponent = component;
-      bestScore = score;
-      bestTouchesBorder = borderTouchCount > 0;
-      bestBorderTouchCount = borderTouchCount;
-    }
-  }
-
-  const alphaValues = new Uint8ClampedArray(pixelCount);
-
-  bestComponent.forEach((componentIndex) => {
-    alphaValues[componentIndex] = 255;
-  });
-
-  return {
-    borderTouchCount: bestBorderTouchCount,
-    mask: createMaskFromAlpha(width, height, alphaValues),
-    touchesBorder: bestTouchesBorder
-  };
-}
-
 export function fillMaskHoles(mask: ImageData) {
   const width = mask.width;
   const height = mask.height;
@@ -524,43 +405,25 @@ export function generateAutoGarmentMask(
     ? createAlphaMaskFromTransparency(imageData, alphaThreshold)
     : createForegroundMaskByBackgroundDifference(imageData, options);
   const candidateArea = getMaskArea(initialMask);
-  const selectedComponent = selectGarmentLikeComponent(initialMask, minAreaRatio);
-  const selectedArea = getMaskArea(selectedComponent.mask);
-  const filledMask = fillMaskHoles(selectedComponent.mask);
+  const largestMask = keepLargestConnectedComponent(initialMask);
+  const largestArea = getMaskArea(largestMask);
+  const filledMask = fillMaskHoles(largestMask);
   const softenedMask = softenMaskEdge(filledMask, options.feather ?? 2);
-  const coverageRatio = getMaskArea(softenedMask) / getPixelCount(imageData);
-  const touchesBorderRatio = getTouchesBorderRatio(softenedMask);
-  const foregroundRatio = selectedArea / getPixelCount(imageData);
-  const componentPurity = candidateArea > 0 ? selectedArea / candidateArea : 0;
+  const foregroundRatio = largestArea / getPixelCount(imageData);
+  const componentPurity = candidateArea > 0 ? largestArea / candidateArea : 0;
   const areaConfidence =
-    coverageRatio < minAreaRatio || coverageRatio > 0.82
+    foregroundRatio < minAreaRatio || foregroundRatio > 0.92
       ? 0.18
-      : coverageRatio > 0.65
-        ? 0.25
-        : coverageRatio < 0.04 || coverageRatio > 0.55
+      : foregroundRatio < 0.04 || foregroundRatio > 0.78
         ? 0.48
         : 0.82;
-  const borderConfidence = touchesBorderRatio > 0.3 ? 0.28 : touchesBorderRatio > 0.12 ? 0.55 : 1;
   const sourceConfidence = hasTransparentEdges ? 0.94 : 0.72;
-  const confidence = clamp(
-    sourceConfidence * areaConfidence * borderConfidence * clamp(componentPurity, 0.35, 1),
-    0,
-    1
-  );
-  const warning =
-    confidence < 0.25
-      ? "自动识别失败，请手动绘制校色范围"
-      : confidence < 0.5 || coverageRatio > 0.65 || touchesBorderRatio > 0.12
-        ? "自动识别不确定，请手动修正校色范围"
-        : undefined;
+  const confidence = clamp(sourceConfidence * areaConfidence * clamp(componentPurity, 0.35, 1), 0, 1);
 
   return {
-    coverageRatio,
     confidence,
     foregroundRatio,
     mask: softenedMask,
-    reason: warning,
-    touchesBorderRatio,
-    warning
+    reason: confidence < 0.45 ? "自动识别不确定，请手动修正蒙版" : undefined
   };
 }

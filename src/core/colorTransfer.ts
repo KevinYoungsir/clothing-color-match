@@ -9,7 +9,6 @@ export type ColorTransferOptions = {
   shadowProtection: number;
   highlightProtection: number;
   maskFeather: number;
-  lightnessBlend?: number;
 };
 
 export type ColorTransferStats = {
@@ -17,17 +16,12 @@ export type ColorTransferStats = {
   targetPixelCount: number;
   referenceA: number;
   referenceB: number;
-  referenceL: number;
   targetA: number;
   targetB: number;
-  targetL: number;
   targetAfterA: number;
   targetAfterB: number;
-  targetAfterL: number;
   deltaA: number;
   deltaB: number;
-  deltaEBefore: number;
-  deltaEAfter: number;
 };
 
 export type ColorTransferResult = {
@@ -60,37 +54,14 @@ function assertSameSize(imageData: ImageData, mask: ImageData, label: string) {
   }
 }
 
-type LabSample = {
-  l: number;
-  a: number;
-  b: number;
-};
-
-function getMedian(values: number[]) {
-  if (values.length === 0) {
-    return Number.NaN;
-  }
-
-  const sortedValues = [...values].sort((a, b) => a - b);
-  const middleIndex = Math.floor(sortedValues.length / 2);
-
-  if (sortedValues.length % 2 === 1) {
-    return sortedValues[middleIndex];
-  }
-
-  return (sortedValues[middleIndex - 1] + sortedValues[middleIndex]) / 2;
-}
-
-function getDeltaE(first: LabSample, second: LabSample) {
-  return Math.hypot(first.l - second.l, first.a - second.a, first.b - second.b);
-}
-
-function calculateMaskedLabStats(imageData: ImageData, mask?: ImageData | null) {
+function calculateMaskedLabAverage(imageData: ImageData, mask?: ImageData | null) {
   if (mask) {
     assertSameSize(imageData, mask, "蒙版");
   }
 
-  const samples: LabSample[] = [];
+  let totalA = 0;
+  let totalB = 0;
+  let totalWeight = 0;
 
   for (let index = 0; index < imageData.data.length; index += 4) {
     const alpha = imageData.data[index + 3] / 255;
@@ -100,61 +71,23 @@ function calculateMaskedLabStats(imageData: ImageData, mask?: ImageData | null) 
     }
 
     const maskAlpha = getMaskAlpha(mask, index);
+    const weight = alpha * maskAlpha;
 
-    if (maskAlpha < 0.55) {
+    if (weight <= 0) {
       continue;
     }
 
     const lab = rgbToLab(imageData.data[index], imageData.data[index + 1], imageData.data[index + 2]);
-    samples.push(lab);
+    totalA += lab.a * weight;
+    totalB += lab.b * weight;
+    totalWeight += weight;
   }
-
-  if (samples.length === 0) {
-    return {
-      medianA: Number.NaN,
-      medianB: Number.NaN,
-      medianL: Number.NaN,
-      pixelCount: 0
-    };
-  }
-
-  const sortedByLightness = [...samples].sort((first, second) => first.l - second.l);
-  const trimCount = Math.floor(sortedByLightness.length * 0.1);
-  const trimmedSamples = sortedByLightness
-    .slice(trimCount, Math.max(trimCount + 1, sortedByLightness.length - trimCount))
-    .filter((sample) => sample.l >= 6 && sample.l <= 96);
-  const robustSamples = trimmedSamples.length >= Math.max(12, samples.length * 0.35)
-    ? trimmedSamples
-    : sortedByLightness;
 
   return {
-    medianA: getMedian(robustSamples.map((sample) => sample.a)),
-    medianB: getMedian(robustSamples.map((sample) => sample.b)),
-    medianL: getMedian(robustSamples.map((sample) => sample.l)),
-    pixelCount: robustSamples.length
+    averageA: totalA / totalWeight,
+    averageB: totalB / totalWeight,
+    pixelCount: totalWeight
   };
-}
-
-function calculateMaskedLabAverage(imageData: ImageData, mask?: ImageData | null) {
-  const stats = calculateMaskedLabStats(imageData, mask);
-
-  return {
-    averageA: stats.medianA,
-    averageB: stats.medianB,
-    averageL: stats.medianL,
-    pixelCount: stats.pixelCount
-  };
-}
-
-function calculateToneAwareLabStats(imageData: ImageData, mask?: ImageData | null) {
-  const stats = calculateMaskedLabStats(imageData, mask);
-
-  return {
-    a: stats.medianA,
-    b: stats.medianB,
-    l: stats.medianL,
-    pixelCount: stats.pixelCount
-  }
 }
 
 function createMaskWeights(mask: ImageData, featherRadius: number) {
@@ -250,8 +183,7 @@ export function transferLabColor(options: ColorTransferOptions): ColorTransferRe
     colorStrength,
     shadowProtection,
     highlightProtection,
-    maskFeather,
-    lightnessBlend = 0.14
+    maskFeather
   } = options;
 
   assertSameSize(targetImageData, targetMask, "目标蒙版");
@@ -262,20 +194,19 @@ export function transferLabColor(options: ColorTransferOptions): ColorTransferRe
 
   assertSameSize(referenceImageData, referenceMask, "标准图蒙版");
 
-  const referenceStats = calculateToneAwareLabStats(referenceImageData, referenceMask);
-  const targetStats = calculateToneAwareLabStats(targetImageData, targetMask);
+  const referenceStats = calculateMaskedLabAverage(referenceImageData, referenceMask);
+  const targetStats = calculateMaskedLabAverage(targetImageData, targetMask);
 
-  if (!Number.isFinite(referenceStats.a) || !Number.isFinite(referenceStats.b)) {
+  if (!Number.isFinite(referenceStats.averageA) || !Number.isFinite(referenceStats.averageB)) {
     throw new Error(emptyReferenceMessage);
   }
 
-  if (!Number.isFinite(targetStats.a) || !Number.isFinite(targetStats.b)) {
+  if (!Number.isFinite(targetStats.averageA) || !Number.isFinite(targetStats.averageB)) {
     throw new Error(emptyResultMessage);
   }
 
-  const deltaA = referenceStats.a - targetStats.a;
-  const deltaB = referenceStats.b - targetStats.b;
-  const deltaL = referenceStats.l - targetStats.l;
+  const deltaA = referenceStats.averageA - targetStats.averageA;
+  const deltaB = referenceStats.averageB - targetStats.averageB;
   const output = new ImageData(new Uint8ClampedArray(targetImageData.data), targetImageData.width, targetImageData.height);
   const maskWeights = createMaskWeights(targetMask, maskFeather);
   const baseStrength = clamp((colorStrength / 100) * 1.15, 0, 1);
@@ -308,7 +239,7 @@ export function transferLabColor(options: ColorTransferOptions): ColorTransferRe
       }
 
       const correctedLab = {
-        l: lab.l + deltaL * clamp(lightnessBlend, 0, 0.35) * strength,
+        l: lab.l,
         a: lab.a + deltaA * strength,
         b: lab.b + deltaB * strength
       };
@@ -320,35 +251,21 @@ export function transferLabColor(options: ColorTransferOptions): ColorTransferRe
     }
   }
 
-  const targetAfterStats = calculateToneAwareLabStats(output, targetMask);
-  const deltaEBefore = getDeltaE(referenceStats, targetStats);
-  const deltaEAfter = getDeltaE(referenceStats, targetAfterStats);
+  const targetAfterStats = calculateMaskedLabAverage(output, targetMask);
   const stats = {
     deltaA,
     deltaB,
-    deltaEAfter,
-    deltaEBefore,
-    referenceA: referenceStats.a,
-    referenceB: referenceStats.b,
-    referenceL: referenceStats.l,
+    referenceA: referenceStats.averageA,
+    referenceB: referenceStats.averageB,
     referencePixelCount: referenceStats.pixelCount,
-    targetA: targetStats.a,
-    targetAfterA: targetAfterStats.a,
-    targetAfterB: targetAfterStats.b,
-    targetAfterL: targetAfterStats.l,
-    targetB: targetStats.b,
-    targetL: targetStats.l,
+    targetA: targetStats.averageA,
+    targetAfterA: targetAfterStats.averageA,
+    targetAfterB: targetAfterStats.averageB,
+    targetB: targetStats.averageB,
     targetPixelCount: targetStats.pixelCount
   };
 
-  console.debug("Lab color transfer", {
-    deltaEAfter,
-    deltaEBefore,
-    referenceLabMedian: { l: stats.referenceL, a: stats.referenceA, b: stats.referenceB },
-    targetAfterLabMedian: { l: stats.targetAfterL, a: stats.targetAfterA, b: stats.targetAfterB },
-    targetBeforeLabMedian: { l: stats.targetL, a: stats.targetA, b: stats.targetB },
-    transferDelta: { a: deltaA, b: deltaB }
-  });
+  console.debug("Lab color transfer", stats);
 
   return {
     imageData: output,
