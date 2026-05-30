@@ -483,8 +483,8 @@ export function CanvasWorkspace({
   }
 
   return (
-    <section className="flex min-h-0 flex-col rounded-lg border border-zinc-200 bg-white shadow-panel">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3">
+    <section className="flex min-h-[560px] min-w-0 flex-col rounded-lg border border-zinc-200 bg-white shadow-panel lg:min-h-[calc(100vh-220px)]">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 px-4 py-2.5">
         <div>
           <p className="text-xs font-semibold uppercase text-rose-700">Preview</p>
           <h2 className="mt-1 text-base font-semibold">{previewTitle}</h2>
@@ -542,8 +542,8 @@ export function CanvasWorkspace({
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 place-items-center p-6">
-        <div className="canvas-checker relative w-full max-w-4xl overflow-hidden rounded-lg border border-zinc-200 p-5">
+      <div className="grid min-h-0 flex-1 place-items-center p-3 lg:p-4">
+        <div className="canvas-checker relative w-full max-w-[1440px] overflow-hidden rounded-lg border border-zinc-200 p-3 lg:p-4">
           <canvas
             aria-label={selectedImage ? `当前图片预览：${selectedImage.fileName}` : "当前图片预览"}
             className={`block aspect-[16/10] w-full rounded-md border border-zinc-300 bg-white ${
@@ -577,7 +577,7 @@ export function CanvasWorkspace({
           ) : null}
 
           {canCompare && compareMode === "split" && !isHoldingOriginal ? (
-            <div className="pointer-events-none absolute inset-5">
+            <div className="pointer-events-none absolute inset-3 lg:inset-4">
               <div
                 aria-label="拖动分割线"
                 className="pointer-events-auto absolute top-0 h-full w-5 -translate-x-1/2 cursor-ew-resize"
@@ -595,7 +595,7 @@ export function CanvasWorkspace({
           ) : null}
 
           {!selectedImage ? (
-            <div className="pointer-events-none absolute inset-5 grid place-items-center">
+            <div className="pointer-events-none absolute inset-3 grid place-items-center lg:inset-4">
               <div className="rounded-md border border-zinc-200 bg-white px-4 py-3 text-center shadow-sm">
                 <p className="text-sm font-semibold text-zinc-700">
                   {mode === "reference" ? "未加载标准图" : "未加载样品图"}

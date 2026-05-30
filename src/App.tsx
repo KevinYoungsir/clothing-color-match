@@ -948,7 +948,7 @@ export default function App() {
       <div className="flex min-h-screen w-full flex-col">
         <TopToolbar />
 
-        <section className="grid min-h-0 flex-1 grid-cols-1 gap-4 px-4 py-4 lg:grid-cols-[280px_minmax(0,1fr)_320px]">
+        <section className="grid min-h-0 flex-1 grid-cols-1 gap-3 px-3 py-3 lg:grid-cols-[240px_minmax(0,1fr)_300px] xl:grid-cols-[260px_minmax(0,1fr)_320px]">
           <ImageSidebar
             onReferenceUpload={handleReferenceUpload}
             onSampleSelect={setSelectedSampleId}
