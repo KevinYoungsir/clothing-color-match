@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 import { getContainLayout } from "../core/maskUtils";
-import type { MaskEditMode, MaskPoint, MaskState, UploadedImage } from "../types";
+import type { MaskEditMode, MaskPoint, MaskState, MaskTool, UploadedImage } from "../types";
 
 type CompareMode = "single" | "sideBySide" | "split";
 
@@ -8,6 +8,7 @@ type CanvasWorkspaceProps = {
   brushSize: number;
   isMaskEditingActive: boolean;
   isMaskVisible: boolean;
+  maskTool: MaskTool;
   maskOpacity: number;
   maskState: MaskState | null;
   mode: MaskEditMode;
@@ -25,6 +26,7 @@ export function CanvasWorkspace({
   brushSize,
   isMaskEditingActive,
   isMaskVisible,
+  maskTool,
   maskOpacity,
   maskState,
   mode,
@@ -43,6 +45,11 @@ export function CanvasWorkspace({
   const [isHoldingOriginal, setIsHoldingOriginal] = useState(false);
   const [splitPosition, setSplitPosition] = useState(50);
   const [zoomIndex, setZoomIndex] = useState(0);
+  const [brushCursor, setBrushCursor] = useState<{
+    size: number;
+    x: number;
+    y: number;
+  } | null>(null);
 
   const isTargetMode = mode === "target";
   const canCompare = Boolean(isTargetMode && processedImageData && selectedImage);
@@ -100,6 +107,29 @@ export function CanvasWorkspace({
       setCompareMode("single");
     }
   }, [compareMode, isMaskEditingActive]);
+
+  useEffect(() => {
+    if (!canEditMask) {
+      setBrushCursor(null);
+    }
+  }, [canEditMask]);
+
+  useEffect(() => {
+    setBrushCursor((currentCursor) => {
+      const canvas = canvasRef.current;
+
+      if (!currentCursor || !canvas) {
+        return currentCursor;
+      }
+
+      const rect = canvas.getBoundingClientRect();
+
+      return {
+        ...currentCursor,
+        size: Math.max(4, brushSize * (rect.width / canvas.width))
+      };
+    });
+  }, [brushSize, zoom]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -376,6 +406,26 @@ export function CanvasWorkspace({
     };
   }
 
+  function updateBrushCursor(event: PointerEvent<HTMLCanvasElement>) {
+    const canvas = canvasRef.current;
+    const canvasShell = canvas?.parentElement;
+    const maskPoint = getMaskPoint(event);
+
+    if (!canvas || !canvasShell || !maskPoint) {
+      setBrushCursor(null);
+      return;
+    }
+
+    const canvasRect = canvas.getBoundingClientRect();
+    const shellRect = canvasShell.getBoundingClientRect();
+
+    setBrushCursor({
+      size: Math.max(4, brushSize * (canvasRect.width / canvas.width)),
+      x: event.clientX - shellRect.left,
+      y: event.clientY - shellRect.top
+    });
+  }
+
   function handlePointerDown(event: PointerEvent<HTMLCanvasElement>) {
     if (
       event.button !== 0 ||
@@ -386,6 +436,7 @@ export function CanvasWorkspace({
       return;
     }
 
+    updateBrushCursor(event);
     const maskPoint = getMaskPoint(event);
 
     if (!maskPoint) {
@@ -400,6 +451,8 @@ export function CanvasWorkspace({
   }
 
   function handlePointerMove(event: PointerEvent<HTMLCanvasElement>) {
+    updateBrushCursor(event);
+
     if (!isDrawing || !selectedImage) {
       return;
     }
@@ -423,6 +476,10 @@ export function CanvasWorkspace({
 
     previousPointRef.current = null;
     setIsDrawing(false);
+
+    if (event.type === "pointerleave" || event.type === "pointercancel") {
+      setBrushCursor(null);
+    }
   }
 
   return (
@@ -501,6 +558,23 @@ export function CanvasWorkspace({
             ref={canvasRef}
             width={canvasWidth}
           />
+
+          {brushCursor ? (
+            <div
+              aria-hidden="true"
+              className={`pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 ${
+                maskTool === "eraser"
+                  ? "border-rose-500 bg-rose-500/10"
+                  : "border-teal-500 bg-teal-500/10"
+              }`}
+              style={{
+                height: `${brushCursor.size}px`,
+                left: `${brushCursor.x}px`,
+                top: `${brushCursor.y}px`,
+                width: `${brushCursor.size}px`
+              }}
+            />
+          ) : null}
 
           {canCompare && compareMode === "split" && !isHoldingOriginal ? (
             <div className="pointer-events-none absolute inset-5">

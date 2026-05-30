@@ -963,6 +963,7 @@ export default function App() {
             brushSize={brushSize}
             isMaskEditingActive={isMaskEditingActive}
             isMaskVisible={isMaskVisible}
+            maskTool={maskTool}
             maskOpacity={maskOpacity}
             maskState={activeMaskState}
             mode={maskEditMode}
