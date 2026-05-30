@@ -11,7 +11,7 @@ export type MaskTool = "brush" | "eraser";
 
 export type MaskEditMode = "reference" | "target";
 
-export type MaskRecognitionStatus = "unrecognized" | "auto" | "manual";
+export type MaskRecognitionStatus = "unrecognized" | "auto" | "manual" | "colored";
 
 export type MaskPoint = {
   x: number;

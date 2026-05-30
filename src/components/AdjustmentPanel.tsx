@@ -66,6 +66,7 @@ const adjustmentControls: Array<{
 
 const maskStatusLabels: Record<MaskRecognitionStatus, string> = {
   auto: "自动识别",
+  colored: "已校色",
   manual: "手动修正",
   unrecognized: "未识别"
 };

@@ -64,10 +64,11 @@ export default function App() {
     useState<MaskRecognitionStatus>("unrecognized");
   const [sampleMaskStatuses, setSampleMaskStatuses] = useState<Record<string, MaskRecognitionStatus>>({});
   const [maskEditMode, setMaskEditMode] = useState<MaskEditMode>("target");
+  const [isMaskEditingActive, setIsMaskEditingActive] = useState(false);
   const [maskTool, setMaskTool] = useState<MaskTool>("brush");
   const [brushSize, setBrushSize] = useState(32);
   const [maskOpacity, setMaskOpacity] = useState(55);
-  const [isMaskVisible, setIsMaskVisible] = useState(true);
+  const [isMaskVisible, setIsMaskVisible] = useState(false);
   const [colorStrength, setColorStrength] = useState(70);
   const [shadowProtection, setShadowProtection] = useState(35);
   const [highlightProtection, setHighlightProtection] = useState(35);
@@ -139,7 +140,7 @@ export default function App() {
     }
 
     if (!selectedMaskState || !hasMaskPixels(selectedMaskState.imageData)) {
-      setAdjustmentError("请先绘制样品图衣服蒙版");
+      setAdjustmentError("请先自动识别并校色，或点击编辑校色范围后修正蒙版");
       setAdjustedImages((currentImages) => {
         const { [selectedSampleId]: _removedImage, ...remainingImages } = currentImages;
         return remainingImages;
@@ -223,6 +224,8 @@ export default function App() {
       setReferenceMaskState(createMaskState(image.width, image.height));
       setReferenceMaskStatus("unrecognized");
       setMaskEditMode("reference");
+      setIsMaskEditingActive(false);
+      setIsMaskVisible(false);
       setProcessedImages({});
       setAdjustedImages({});
       setUploadError(null);
@@ -278,6 +281,8 @@ export default function App() {
       });
       setSelectedSampleId((currentId) => currentId ?? loadedImages[0].id);
       setMaskEditMode("target");
+      setIsMaskEditingActive(false);
+      setIsMaskVisible(false);
       setColorTransferError(null);
       setAutoMaskNotice(null);
       setAdjustmentError(null);
@@ -298,6 +303,8 @@ export default function App() {
       setReferenceMaskState((currentMask) =>
         pushUndoSnapshot(currentMask ?? createMaskState(referenceImage.width, referenceImage.height))
       );
+      setIsMaskEditingActive(true);
+      setIsMaskVisible(true);
       setReferenceMaskStatus("manual");
       setColorTransferError(null);
       setAutoMaskNotice(null);
@@ -323,6 +330,8 @@ export default function App() {
       ...currentStatuses,
       [selectedSample.id]: "manual"
     }));
+    setIsMaskEditingActive(true);
+    setIsMaskVisible(true);
     setColorTransferError(null);
     setAutoMaskNotice(null);
     setProcessedImages((currentImages) => {
@@ -659,6 +668,7 @@ export default function App() {
 
         setReferenceMaskState((currentMask) => createAutoMaskState(autoMaskResult.mask, currentMask));
         setReferenceMaskStatus("auto");
+        setIsMaskEditingActive(true);
         setIsMaskVisible(true);
         setProcessedImages({});
         setAdjustedImages({});
@@ -680,6 +690,7 @@ export default function App() {
       ensureMaskConfidence("样品图", autoMaskResult);
 
       storeAutoTargetMask(selectedSample, autoMaskResult);
+      setIsMaskEditingActive(true);
       setIsMaskVisible(true);
       clearSampleResult(selectedSample.id);
       setAutoMaskNotice(getAutoMaskNotice("样品图", autoMaskResult));
@@ -695,7 +706,22 @@ export default function App() {
       setMaskEditMode("reference");
     }
 
+    setIsMaskEditingActive(true);
     setIsMaskVisible(true);
+  }
+
+  function handleMaskEditModeChange(mode: MaskEditMode) {
+    setMaskEditMode(mode);
+    setIsMaskEditingActive(true);
+    setIsMaskVisible(true);
+  }
+
+  function handleToggleMaskVisible(isVisible: boolean) {
+    setIsMaskVisible(isVisible);
+
+    if (isVisible) {
+      setIsMaskEditingActive(true);
+    }
   }
 
   function storeProcessedResults(results: ProcessedSampleResult[]) {
@@ -722,6 +748,15 @@ export default function App() {
       });
 
       return nextImages;
+    });
+    setSampleMaskStatuses((currentStatuses) => {
+      const nextStatuses = { ...currentStatuses };
+
+      results.forEach((result) => {
+        nextStatuses[result.image.id] = "colored";
+      });
+
+      return nextStatuses;
     });
   }
 
@@ -893,8 +928,14 @@ export default function App() {
         ...currentImages,
         [selectedSample.id]: result.imageData
       }));
+      setSampleMaskStatuses((currentStatuses) => ({
+        ...currentStatuses,
+        [selectedSample.id]: "colored"
+      }));
       setMaskEditMode("target");
-      setIsMaskVisible(true);
+      setIsMaskEditingActive(false);
+      setIsMaskVisible(false);
+      setAutoMaskNotice("已完成自动识别与校色，可点击编辑校色范围进行修正。");
     } catch (error) {
       setColorTransferError(error instanceof Error ? error.message : "自动校色失败");
     } finally {
@@ -920,6 +961,7 @@ export default function App() {
           />
           <CanvasWorkspace
             brushSize={brushSize}
+            isMaskEditingActive={isMaskEditingActive}
             isMaskVisible={isMaskVisible}
             maskOpacity={maskOpacity}
             maskState={activeMaskState}
@@ -939,7 +981,7 @@ export default function App() {
             colorStrength={colorStrength}
             colorTransferError={colorTransferError}
             autoMaskNotice={autoMaskNotice}
-            hasColorResult={Boolean(selectedPreviewImageData)}
+            hasColorResult={Boolean(selectedPreviewImageData || selectedSampleMaskStatus !== "unrecognized")}
             hasReferenceImage={Boolean(referenceImage)}
             hasSelectedImage={Boolean(selectedSample)}
             highlightProtection={highlightProtection}
@@ -959,7 +1001,7 @@ export default function App() {
             onApplyColorTransfer={handleApplyColorTransfer}
             onAdjustmentParamChange={handleAdjustmentParamChange}
             onMaskOpacityChange={setMaskOpacity}
-            onMaskEditModeChange={setMaskEditMode}
+            onMaskEditModeChange={handleMaskEditModeChange}
             onMaskFeatherChange={setMaskFeather}
             onMaskToolChange={setMaskTool}
             onRedoMask={handleRedoMask}
@@ -967,7 +1009,7 @@ export default function App() {
             onResetAdjustmentParam={handleResetAdjustmentParam}
             onResetAllAdjustments={handleResetAllAdjustments}
             onShadowProtectionChange={setShadowProtection}
-            onToggleMaskVisible={setIsMaskVisible}
+            onToggleMaskVisible={handleToggleMaskVisible}
             onUndoMask={handleUndoMask}
             shadowProtection={shadowProtection}
           />

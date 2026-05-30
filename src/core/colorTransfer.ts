@@ -18,6 +18,10 @@ export type ColorTransferStats = {
   referenceB: number;
   targetA: number;
   targetB: number;
+  targetAfterA: number;
+  targetAfterB: number;
+  deltaA: number;
+  deltaB: number;
 };
 
 export type ColorTransferResult = {
@@ -205,7 +209,7 @@ export function transferLabColor(options: ColorTransferOptions): ColorTransferRe
   const deltaB = referenceStats.averageB - targetStats.averageB;
   const output = new ImageData(new Uint8ClampedArray(targetImageData.data), targetImageData.width, targetImageData.height);
   const maskWeights = createMaskWeights(targetMask, maskFeather);
-  const baseStrength = clamp(colorStrength, 0, 100) / 100;
+  const baseStrength = clamp((colorStrength / 100) * 1.15, 0, 1);
 
   for (let y = 0; y < targetImageData.height; y += 1) {
     for (let x = 0; x < targetImageData.width; x += 1) {
@@ -227,7 +231,7 @@ export function transferLabColor(options: ColorTransferOptions): ColorTransferRe
         targetImageData.data[pixelIndex + 1],
         targetImageData.data[pixelIndex + 2]
       );
-      const toneFactor = getToneProtectionFactor(lab.l, shadowProtection, highlightProtection);
+      const toneFactor = 0.35 + getToneProtectionFactor(lab.l, shadowProtection, highlightProtection) * 0.65;
       const strength = baseStrength * maskWeight * toneFactor;
 
       if (strength <= 0) {
@@ -247,15 +251,24 @@ export function transferLabColor(options: ColorTransferOptions): ColorTransferRe
     }
   }
 
+  const targetAfterStats = calculateMaskedLabAverage(output, targetMask);
+  const stats = {
+    deltaA,
+    deltaB,
+    referenceA: referenceStats.averageA,
+    referenceB: referenceStats.averageB,
+    referencePixelCount: referenceStats.pixelCount,
+    targetA: targetStats.averageA,
+    targetAfterA: targetAfterStats.averageA,
+    targetAfterB: targetAfterStats.averageB,
+    targetB: targetStats.averageB,
+    targetPixelCount: targetStats.pixelCount
+  };
+
+  console.debug("Lab color transfer", stats);
+
   return {
     imageData: output,
-    stats: {
-      referenceA: referenceStats.averageA,
-      referenceB: referenceStats.averageB,
-      referencePixelCount: referenceStats.pixelCount,
-      targetA: targetStats.averageA,
-      targetB: targetStats.averageB,
-      targetPixelCount: targetStats.pixelCount
-    }
+    stats
   };
 }

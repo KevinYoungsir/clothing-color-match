@@ -6,6 +6,7 @@ type CompareMode = "single" | "sideBySide" | "split";
 
 type CanvasWorkspaceProps = {
   brushSize: number;
+  isMaskEditingActive: boolean;
   isMaskVisible: boolean;
   maskOpacity: number;
   maskState: MaskState | null;
@@ -22,6 +23,7 @@ const zoomLevels = [1, 1.5, 2, 3];
 
 export function CanvasWorkspace({
   brushSize,
+  isMaskEditingActive,
   isMaskVisible,
   maskOpacity,
   maskState,
@@ -44,7 +46,10 @@ export function CanvasWorkspace({
 
   const isTargetMode = mode === "target";
   const canCompare = Boolean(isTargetMode && processedImageData && selectedImage);
-  const canEditMask = Boolean(selectedImage && (!isTargetMode || compareMode === "single"));
+  const canEditMask = Boolean(
+    isMaskEditingActive && selectedImage && (!isTargetMode || compareMode === "single")
+  );
+  const shouldDrawMaskOverlay = Boolean(isMaskEditingActive && isMaskVisible);
   const zoom = zoomLevels[zoomIndex];
   const previewTitle =
     mode === "reference"
@@ -91,6 +96,12 @@ export function CanvasWorkspace({
   }, [canCompare, compareMode]);
 
   useEffect(() => {
+    if (isMaskEditingActive && compareMode !== "single") {
+      setCompareMode("single");
+    }
+  }, [compareMode, isMaskEditingActive]);
+
+  useEffect(() => {
     const canvas = canvasRef.current;
 
     if (!canvas) {
@@ -135,7 +146,7 @@ export function CanvasWorkspace({
       rect: { x: number; y: number; width: number; height: number },
       clipRect?: { x: number; y: number; width: number; height: number }
     ) {
-      if (!selectedImage || !maskState || !isMaskVisible) {
+      if (!selectedImage || !maskState || !shouldDrawMaskOverlay) {
         return;
       }
 
@@ -186,9 +197,6 @@ export function CanvasWorkspace({
 
         drawSourceInRect(originalSource, leftRect);
         drawSourceInRect(resultSource, rightRect);
-        drawMaskOverlay(leftRect);
-        drawMaskOverlay(rightRect);
-
         drawContext.save();
         drawContext.strokeStyle = "#e4e4e7";
         drawContext.lineWidth = 2;
@@ -207,14 +215,12 @@ export function CanvasWorkspace({
         const splitX = (drawCanvas.width * splitPosition) / 100;
 
         drawSourceInRect(resultSource, fullRect);
-        drawMaskOverlay(fullRect);
 
         drawContext.save();
         drawContext.beginPath();
         drawContext.rect(0, 0, splitX, drawCanvas.height);
         drawContext.clip();
         drawSourceInRect(originalSource, fullRect);
-        drawMaskOverlay(fullRect, { x: 0, y: 0, width: splitX, height: drawCanvas.height });
         drawContext.restore();
 
         drawContext.save();
@@ -232,7 +238,10 @@ export function CanvasWorkspace({
       }
 
       drawSourceInRect(isHoldingOriginal ? originalSource : resultSource, fullRect);
-      drawMaskOverlay(fullRect);
+
+      if (activeCompareMode === "single") {
+        drawMaskOverlay(fullRect);
+      }
     }
 
     clearCanvas();
@@ -286,6 +295,7 @@ export function CanvasWorkspace({
   }, [
     compareMode,
     isHoldingOriginal,
+    isMaskEditingActive,
     isMaskVisible,
     isTargetMode,
     maskOpacity,
@@ -332,7 +342,7 @@ export function CanvasWorkspace({
   function getMaskPoint(event: PointerEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current;
 
-    if (!canvas || !selectedImage || (isTargetMode && compareMode !== "single")) {
+    if (!canvas || !selectedImage || !isMaskEditingActive || (isTargetMode && compareMode !== "single")) {
       return null;
     }
 
@@ -367,7 +377,12 @@ export function CanvasWorkspace({
   }
 
   function handlePointerDown(event: PointerEvent<HTMLCanvasElement>) {
-    if (event.button !== 0 || !selectedImage || (isTargetMode && compareMode !== "single")) {
+    if (
+      event.button !== 0 ||
+      !selectedImage ||
+      !isMaskEditingActive ||
+      (isTargetMode && compareMode !== "single")
+    ) {
       return;
     }
 

@@ -15,12 +15,14 @@ type ImageSidebarProps = {
 const acceptedImageTypes = "image/jpeg,image/png,image/webp";
 const maskStatusLabels: Record<MaskRecognitionStatus, string> = {
   auto: "自动识别",
+  colored: "已校色",
   manual: "手动修正",
   unrecognized: "未识别"
 };
 
 const maskStatusClasses: Record<MaskRecognitionStatus, string> = {
   auto: "bg-sky-50 text-sky-700",
+  colored: "bg-teal-50 text-teal-700",
   manual: "bg-emerald-50 text-emerald-700",
   unrecognized: "bg-zinc-100 text-zinc-500"
 };
