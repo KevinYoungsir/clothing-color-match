@@ -13,6 +13,8 @@ export type MaskEditMode = "reference" | "target";
 
 export type MaskRecognitionStatus = "unrecognized" | "auto" | "manual" | "colored";
 
+export type ColorCorrectionScope = "auto-garment" | "full-image" | "manual-mask";
+
 export type MaskPoint = {
   x: number;
   y: number;

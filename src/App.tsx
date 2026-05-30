@@ -37,6 +37,7 @@ import {
 } from "./core/batchProcessor";
 import { generateAutoGarmentMask, type AutoMaskResult } from "./core/autoMask";
 import type {
+  ColorCorrectionScope,
   MaskEditMode,
   MaskPoint,
   MaskRecognitionStatus,
@@ -63,6 +64,8 @@ export default function App() {
   const [referenceMaskStatus, setReferenceMaskStatus] =
     useState<MaskRecognitionStatus>("unrecognized");
   const [sampleMaskStatuses, setSampleMaskStatuses] = useState<Record<string, MaskRecognitionStatus>>({});
+  const [colorCorrectionScope, setColorCorrectionScope] =
+    useState<ColorCorrectionScope>("auto-garment");
   const [maskEditMode, setMaskEditMode] = useState<MaskEditMode>("target");
   const [isMaskEditingActive, setIsMaskEditingActive] = useState(false);
   const [maskTool, setMaskTool] = useState<MaskTool>("brush");
@@ -108,11 +111,12 @@ export default function App() {
   const autoColorParams = useMemo<AutoColorParams>(
     () => ({
       colorStrength,
+      colorCorrectionScope,
       highlightProtection,
       maskFeather,
       shadowProtection
     }),
-    [colorStrength, highlightProtection, maskFeather, shadowProtection]
+    [colorCorrectionScope, colorStrength, highlightProtection, maskFeather, shadowProtection]
   );
   const showUpscaleWarning = useMemo(() => {
     const targetLongEdge = getExportLongEdge(exportSize);
@@ -139,7 +143,10 @@ export default function App() {
       return;
     }
 
-    if (!selectedMaskState || !hasMaskPixels(selectedMaskState.imageData)) {
+    if (
+      colorCorrectionScope !== "full-image" &&
+      (!selectedMaskState || !hasMaskPixels(selectedMaskState.imageData))
+    ) {
       setAdjustmentError("请先自动识别并校色，或点击编辑校色范围后修正蒙版");
       setAdjustedImages((currentImages) => {
         const { [selectedSampleId]: _removedImage, ...remainingImages } = currentImages;
@@ -157,11 +164,15 @@ export default function App() {
         }
 
         const baseImageData = selectedProcessedImageData ?? originalImageData;
+        const adjustmentMask =
+          colorCorrectionScope === "full-image"
+            ? createFullImageMask(selectedSample.width, selectedSample.height)
+            : selectedMaskState!.imageData;
         const adjustedImageData = applyImageAdjustments({
           baseImageData,
           originalImageData,
           params: adjustmentParams,
-          targetMask: selectedMaskState.imageData
+          targetMask: adjustmentMask
         });
 
         setAdjustedImages((currentImages) => ({
@@ -179,7 +190,14 @@ export default function App() {
     return () => {
       isCancelled = true;
     };
-  }, [adjustmentParams, selectedMaskState, selectedProcessedImageData, selectedSample, selectedSampleId]);
+  }, [
+    adjustmentParams,
+    colorCorrectionScope,
+    selectedMaskState,
+    selectedProcessedImageData,
+    selectedSample,
+    selectedSampleId
+  ]);
 
   useEffect(() => {
     referenceImageRef.current = referenceImage;
@@ -313,7 +331,7 @@ export default function App() {
       return;
     }
 
-    if (!selectedSample) {
+    if (!selectedSample || colorCorrectionScope === "full-image") {
       return;
     }
 
@@ -362,7 +380,7 @@ export default function App() {
       return;
     }
 
-    if (!selectedSample) {
+    if (!selectedSample || colorCorrectionScope === "full-image") {
       return;
     }
 
@@ -523,7 +541,10 @@ export default function App() {
       return;
     }
 
-    if (!selectedMaskState || !hasMaskPixels(selectedMaskState.imageData)) {
+    if (
+      colorCorrectionScope !== "full-image" &&
+      (!selectedMaskState || !hasMaskPixels(selectedMaskState.imageData))
+    ) {
       setAdjustmentError("请先自动识别并校色，或点击编辑校色范围后修正蒙版");
       setMaskEditMode("target");
     }
@@ -567,6 +588,16 @@ export default function App() {
     };
   }
 
+  function createFullImageMask(width: number, height: number) {
+    const mask = new ImageData(width, height);
+
+    for (let index = 3; index < mask.data.length; index += 4) {
+      mask.data[index] = 255;
+    }
+
+    return mask;
+  }
+
   function getAutoMaskNotice(label: string, result: AutoMaskResult) {
     const message = result.warning ?? result.reason;
 
@@ -597,6 +628,35 @@ export default function App() {
       const { [imageId]: _removedImage, ...remainingImages } = currentImages;
       return remainingImages;
     });
+  }
+
+  function handleColorCorrectionScopeChange(scope: ColorCorrectionScope) {
+    setColorCorrectionScope(scope);
+    setColorTransferError(null);
+    setAutoMaskNotice(null);
+    setAdjustmentError(null);
+    setProcessedImages({});
+    setAdjustedImages({});
+    setBatchStatuses({});
+    setExportMessage(null);
+
+    if (scope === "full-image") {
+      setMaskEditMode("target");
+      setIsMaskEditingActive(false);
+      setIsMaskVisible(false);
+      return;
+    }
+
+    if (scope === "manual-mask") {
+      setMaskEditMode("target");
+      setIsMaskEditingActive(true);
+      setIsMaskVisible(true);
+      return;
+    }
+
+    setMaskEditMode("target");
+    setIsMaskEditingActive(false);
+    setIsMaskVisible(false);
   }
 
   function ensureMaskConfidence(label: string, result: AutoMaskResult) {
@@ -641,11 +701,29 @@ export default function App() {
     return autoMaskResult.mask;
   }
 
+  function getReferenceMaskForScope(referenceImageData: ImageData) {
+    if (colorCorrectionScope === "full-image") {
+      return referenceMaskState && hasMaskPixels(referenceMaskState.imageData)
+        ? referenceMaskState.imageData
+        : null;
+    }
+
+    return ensureReferenceMask(referenceImageData);
+  }
+
   function ensureTargetMask(sample: UploadedImage, targetImageData: ImageData) {
+    if (colorCorrectionScope === "full-image") {
+      return null;
+    }
+
     const currentMask = maskStates[sample.id];
 
     if (currentMask && hasMaskPixels(currentMask.imageData)) {
       return currentMask.imageData;
+    }
+
+    if (colorCorrectionScope === "manual-mask") {
+      throw new Error("样品图缺少手动蒙版，请点击编辑校色范围手动绘制。");
     }
 
     const autoMaskResult = generateAutoGarmentMask(targetImageData, { feather: 2 });
@@ -662,7 +740,7 @@ export default function App() {
     }
 
     const referenceImageData = await loadImageDataFromUrl(referenceImage.url, referenceImage.width, referenceImage.height);
-    const referenceMask = ensureReferenceMask(referenceImageData);
+    const referenceMask = getReferenceMaskForScope(referenceImageData);
 
     return {
       referenceImageData,
@@ -673,6 +751,21 @@ export default function App() {
   async function handleRegenerateAutoMask() {
     setColorTransferError(null);
     setAutoMaskNotice(null);
+
+    if (colorCorrectionScope === "full-image") {
+      setIsMaskEditingActive(false);
+      setIsMaskVisible(false);
+      setAutoMaskNotice("整张样品图模式不需要自动识别样品蒙版。");
+      return;
+    }
+
+    if (colorCorrectionScope === "manual-mask") {
+      setMaskEditMode("target");
+      setIsMaskEditingActive(true);
+      setIsMaskVisible(true);
+      setAutoMaskNotice("手动蒙版模式请使用画笔绘制样品图校色范围。");
+      return;
+    }
 
     try {
       if (maskEditMode === "reference") {
@@ -725,6 +818,17 @@ export default function App() {
   }
 
   function handleEditColorRange() {
+    if (colorCorrectionScope === "full-image") {
+      setColorCorrectionScope("manual-mask");
+      setMaskEditMode("target");
+      setIsMaskEditingActive(true);
+      setIsMaskVisible(true);
+      setAutoMaskNotice("已切换到手动蒙版模式，请绘制样品图校色范围。");
+      setProcessedImages({});
+      setAdjustedImages({});
+      return;
+    }
+
     if (selectedSample) {
       setMaskEditMode("target");
     } else if (referenceImage) {
@@ -736,12 +840,27 @@ export default function App() {
   }
 
   function handleMaskEditModeChange(mode: MaskEditMode) {
+    if (colorCorrectionScope === "full-image" && mode === "target") {
+      setMaskEditMode("target");
+      setIsMaskEditingActive(false);
+      setIsMaskVisible(false);
+      setAutoMaskNotice("整张样品图模式不需要样品蒙版。");
+      return;
+    }
+
     setMaskEditMode(mode);
     setIsMaskEditingActive(true);
     setIsMaskVisible(true);
   }
 
   function handleToggleMaskVisible(isVisible: boolean) {
+    if (colorCorrectionScope === "full-image" && maskEditMode === "target" && isVisible) {
+      setIsMaskEditingActive(false);
+      setIsMaskVisible(false);
+      setAutoMaskNotice("整张样品图模式不需要显示样品蒙版。");
+      return;
+    }
+
     setIsMaskVisible(isVisible);
 
     if (isVisible) {
@@ -936,10 +1055,11 @@ export default function App() {
         loadImageDataFromUrl(referenceImage.url, referenceImage.width, referenceImage.height),
         loadImageDataFromUrl(selectedSample.url, selectedSample.width, selectedSample.height)
       ]);
-      const referenceMask = ensureReferenceMask(referenceImageData);
+      const referenceMask = getReferenceMaskForScope(referenceImageData);
       const targetMask = ensureTargetMask(selectedSample, targetImageData);
       const result = transferLabColor({
         colorStrength,
+        fullImageMode: colorCorrectionScope === "full-image",
         highlightProtection,
         maskFeather,
         referenceImageData,
@@ -960,7 +1080,13 @@ export default function App() {
       setMaskEditMode("target");
       setIsMaskEditingActive(false);
       setIsMaskVisible(false);
-      setAutoMaskNotice("已完成自动识别与校色，可点击编辑校色范围进行修正。");
+      setAutoMaskNotice(
+        colorCorrectionScope === "full-image"
+          ? "已完成整张样品图校色。"
+          : colorCorrectionScope === "manual-mask"
+            ? "已使用当前手动蒙版完成校色。"
+            : "已完成自动识别与校色，可点击编辑校色范围进行修正。"
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : "自动校色失败";
 
@@ -1010,10 +1136,14 @@ export default function App() {
             canApplyColorTransfer={canApplyColorTransfer}
             canRedoMask={canRedoMask}
             canUndoMask={canUndoMask}
+            colorCorrectionScope={colorCorrectionScope}
             colorStrength={colorStrength}
             colorTransferError={colorTransferError}
             autoMaskNotice={autoMaskNotice}
-            hasColorResult={Boolean(selectedPreviewImageData || selectedSampleMaskStatus !== "unrecognized")}
+            hasColorResult={Boolean(
+              selectedPreviewImageData ||
+                (colorCorrectionScope !== "full-image" && selectedSampleMaskStatus !== "unrecognized")
+            )}
             hasReferenceImage={Boolean(referenceImage)}
             hasSelectedImage={Boolean(selectedSample)}
             highlightProtection={highlightProtection}
@@ -1026,6 +1156,7 @@ export default function App() {
             referenceMaskStatus={referenceMaskStatus}
             selectedSampleMaskStatus={selectedSampleMaskStatus}
             onBrushSizeChange={setBrushSize}
+            onColorCorrectionScopeChange={handleColorCorrectionScopeChange}
             onColorStrengthChange={setColorStrength}
             onClearMask={handleClearMask}
             onEditColorRange={handleEditColorRange}

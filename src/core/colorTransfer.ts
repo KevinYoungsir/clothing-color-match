@@ -4,11 +4,12 @@ export type ColorTransferOptions = {
   referenceImageData: ImageData;
   referenceMask?: ImageData | null;
   targetImageData: ImageData;
-  targetMask: ImageData;
+  targetMask?: ImageData | null;
   colorStrength: number;
   shadowProtection: number;
   highlightProtection: number;
   maskFeather: number;
+  fullImageMode?: boolean;
   lightnessBlend?: number;
 };
 
@@ -59,6 +60,20 @@ function assertSameSize(imageData: ImageData, mask: ImageData, label: string) {
   if (imageData.width !== mask.width || imageData.height !== mask.height) {
     throw new Error(`${label}尺寸和图片尺寸不一致`);
   }
+}
+
+function hasMaskAlpha(mask: ImageData | null | undefined) {
+  if (!mask) {
+    return false;
+  }
+
+  for (let index = 3; index < mask.data.length; index += 4) {
+    if (mask.data[index] > 0) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 type LabSample = LabColor & {
@@ -150,9 +165,19 @@ function calculateMaskedLabStats(imageData: ImageData, mask?: ImageData | null):
   };
 }
 
-function createMaskWeights(mask: ImageData, featherRadius: number) {
-  const width = mask.width;
-  const height = mask.height;
+function createMaskWeights(
+  mask: ImageData | null | undefined,
+  width: number,
+  height: number,
+  featherRadius: number
+) {
+  if (!mask) {
+    const fullWeights = new Float32Array(width * height);
+    fullWeights.fill(1);
+
+    return fullWeights;
+  }
+
   const baseWeights = new Float32Array(width * height);
 
   for (let index = 0; index < baseWeights.length; index += 1) {
@@ -244,19 +269,35 @@ export function transferLabColor(options: ColorTransferOptions): ColorTransferRe
     shadowProtection,
     highlightProtection,
     maskFeather,
+    fullImageMode = false,
     lightnessBlend = 0.12
   } = options;
 
-  assertSameSize(targetImageData, targetMask, "目标蒙版");
+  const effectiveTargetMask = fullImageMode ? (hasMaskAlpha(targetMask) ? targetMask : null) : targetMask;
+  const effectiveReferenceMask = fullImageMode
+    ? hasMaskAlpha(referenceMask)
+      ? referenceMask
+      : null
+    : referenceMask;
 
-  if (!referenceMask) {
+  if (!fullImageMode && !effectiveTargetMask) {
+    throw new Error(emptyResultMessage);
+  }
+
+  if (effectiveTargetMask) {
+    assertSameSize(targetImageData, effectiveTargetMask, "目标蒙版");
+  }
+
+  if (!fullImageMode && !effectiveReferenceMask) {
     throw new Error(emptyReferenceMessage);
   }
 
-  assertSameSize(referenceImageData, referenceMask, "标准图蒙版");
+  if (effectiveReferenceMask) {
+    assertSameSize(referenceImageData, effectiveReferenceMask, "标准图蒙版");
+  }
 
-  const referenceStats = calculateMaskedLabStats(referenceImageData, referenceMask);
-  const targetStats = calculateMaskedLabStats(targetImageData, targetMask);
+  const referenceStats = calculateMaskedLabStats(referenceImageData, effectiveReferenceMask);
+  const targetStats = calculateMaskedLabStats(targetImageData, effectiveTargetMask);
 
   if (
     !Number.isFinite(referenceStats.medianL) ||
@@ -278,7 +319,12 @@ export function transferLabColor(options: ColorTransferOptions): ColorTransferRe
   const deltaA = referenceStats.medianA - targetStats.medianA;
   const deltaB = referenceStats.medianB - targetStats.medianB;
   const output = new ImageData(new Uint8ClampedArray(targetImageData.data), targetImageData.width, targetImageData.height);
-  const maskWeights = createMaskWeights(targetMask, maskFeather);
+  const maskWeights = createMaskWeights(
+    effectiveTargetMask,
+    targetImageData.width,
+    targetImageData.height,
+    maskFeather
+  );
   const baseStrength = clamp((colorStrength / 100) * 1.25, 0, 1);
   const lightnessStrength = clamp(lightnessBlend, 0, 0.25);
 
@@ -322,7 +368,7 @@ export function transferLabColor(options: ColorTransferOptions): ColorTransferRe
     }
   }
 
-  const targetAfterStats = calculateMaskedLabStats(output, targetMask);
+  const targetAfterStats = calculateMaskedLabStats(output, effectiveTargetMask);
   const referenceLab = {
     a: referenceStats.medianA,
     b: referenceStats.medianB,

@@ -1,5 +1,5 @@
 import type { AdjustmentKey, AdjustmentParams } from "../core/adjustment";
-import type { MaskEditMode, MaskRecognitionStatus, MaskTool } from "../types";
+import type { ColorCorrectionScope, MaskEditMode, MaskRecognitionStatus, MaskTool } from "../types";
 
 type AdjustmentPanelProps = {
   adjustmentError: string | null;
@@ -9,6 +9,7 @@ type AdjustmentPanelProps = {
   canApplyColorTransfer: boolean;
   canRedoMask: boolean;
   canUndoMask: boolean;
+  colorCorrectionScope: ColorCorrectionScope;
   colorStrength: number;
   colorTransferError: string | null;
   hasColorResult: boolean;
@@ -24,6 +25,7 @@ type AdjustmentPanelProps = {
   referenceMaskStatus: MaskRecognitionStatus;
   selectedSampleMaskStatus: MaskRecognitionStatus;
   onBrushSizeChange: (value: number) => void;
+  onColorCorrectionScopeChange: (scope: ColorCorrectionScope) => void;
   onColorStrengthChange: (value: number) => void;
   onApplyColorTransfer: () => void;
   onAdjustmentParamChange: (key: AdjustmentKey, value: number) => void;
@@ -71,6 +73,28 @@ const maskStatusLabels: Record<MaskRecognitionStatus, string> = {
   unrecognized: "未识别"
 };
 
+const colorCorrectionScopeOptions: Array<{
+  description: string;
+  label: string;
+  value: ColorCorrectionScope;
+}> = [
+  {
+    description: "自动识别服装主体，只校色识别区域。",
+    label: "智能识别服装",
+    value: "auto-garment"
+  },
+  {
+    description: "不需要样品蒙版，整张样品图参与校色。",
+    label: "整张样品图",
+    value: "full-image"
+  },
+  {
+    description: "只使用你手动绘制的样品蒙版。",
+    label: "手动蒙版",
+    value: "manual-mask"
+  }
+];
+
 export function AdjustmentPanel({
   adjustmentError,
   adjustmentParams,
@@ -79,6 +103,7 @@ export function AdjustmentPanel({
   canApplyColorTransfer,
   canRedoMask,
   canUndoMask,
+  colorCorrectionScope,
   colorStrength,
   colorTransferError,
   hasColorResult,
@@ -94,6 +119,7 @@ export function AdjustmentPanel({
   referenceMaskStatus,
   selectedSampleMaskStatus,
   onBrushSizeChange,
+  onColorCorrectionScopeChange,
   onColorStrengthChange,
   onApplyColorTransfer,
   onAdjustmentParamChange,
@@ -114,6 +140,22 @@ export function AdjustmentPanel({
   shadowProtection
 }: AdjustmentPanelProps) {
   const hasEditableImage = maskEditMode === "reference" ? hasReferenceImage : hasSelectedImage;
+  const isFullImageScope = colorCorrectionScope === "full-image";
+  const isManualMaskScope = colorCorrectionScope === "manual-mask";
+  const canUseMaskControls = Boolean(hasEditableImage && !(isFullImageScope && maskEditMode === "target"));
+  const applyButtonText = isColorTransferRunning
+    ? "处理中..."
+    : isFullImageScope
+      ? hasColorResult
+        ? "重新整图校色"
+        : "整图自动校色"
+      : isManualMaskScope
+        ? hasColorResult
+          ? "重新校色"
+          : "开始校色"
+        : hasColorResult
+          ? "重新校色"
+          : "自动识别并校色";
 
   return (
     <aside className="flex min-h-0 flex-col rounded-lg border border-zinc-200 bg-white shadow-panel">
@@ -126,8 +168,33 @@ export function AdjustmentPanel({
         <section>
           <h3 className="text-sm font-semibold text-zinc-800">自动校色</h3>
           <p className="mt-2 rounded-md bg-teal-50 px-3 py-2 text-xs leading-5 text-teal-800">
-            上传标准图和样品图后可直接自动识别并校色。自动识别适合白底图、透明底图、服装主体清晰的图片；如果识别不准确，可用画笔和橡皮擦修正。
+            {isFullImageScope
+              ? "整张样品图模式会把整张样品图向标准图颜色匹配，不需要样品蒙版。"
+              : isManualMaskScope
+                ? "手动蒙版模式只校色你绘制的样品蒙版区域，适合精修复杂背景图片。"
+                : "上传标准图和样品图后可直接自动识别并校色。自动识别适合白底图、透明底图、服装主体清晰的图片；如果识别不准确，可用画笔和橡皮擦修正。"}
           </p>
+
+          <div className="mt-3">
+            <p className="text-xs font-medium text-zinc-500">校色范围</p>
+            <div className="mt-2 grid gap-2">
+              {colorCorrectionScopeOptions.map((option) => (
+                <button
+                  className={`rounded-md border px-3 py-2 text-left transition ${
+                    colorCorrectionScope === option.value
+                      ? "border-teal-500 bg-teal-50 text-teal-800"
+                      : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300"
+                  }`}
+                  key={option.value}
+                  onClick={() => onColorCorrectionScopeChange(option.value)}
+                  type="button"
+                >
+                  <span className="block text-sm font-semibold">{option.label}</span>
+                  <span className="mt-1 block text-xs leading-5 text-zinc-500">{option.description}</span>
+                </button>
+              ))}
+            </div>
+          </div>
 
           <label className="mt-3 block">
             <span className="flex items-center justify-between text-xs font-medium text-zinc-500">
@@ -181,6 +248,7 @@ export function AdjustmentPanel({
             </span>
             <input
               className="mt-2 h-2 w-full appearance-none rounded-full bg-zinc-200 accent-teal-600 disabled:cursor-not-allowed"
+              disabled={isFullImageScope}
               max={24}
               min={0}
               onChange={(event) => onMaskFeatherChange(Number(event.currentTarget.value))}
@@ -195,13 +263,13 @@ export function AdjustmentPanel({
             onClick={onApplyColorTransfer}
             type="button"
           >
-            {isColorTransferRunning ? "处理中..." : hasColorResult ? "重新校色" : "自动识别并校色"}
+            {applyButtonText}
           </button>
 
           <div className="mt-2 grid grid-cols-2 gap-2">
             <button
               className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 disabled:cursor-not-allowed disabled:opacity-45"
-              disabled={!hasEditableImage || isColorTransferRunning}
+              disabled={!hasEditableImage || isColorTransferRunning || isFullImageScope || isManualMaskScope}
               onClick={onRegenerateAutoMask}
               type="button"
             >
@@ -209,7 +277,7 @@ export function AdjustmentPanel({
             </button>
             <button
               className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 disabled:cursor-not-allowed disabled:opacity-45"
-              disabled={!hasReferenceImage && !hasSelectedImage}
+              disabled={isFullImageScope || (!hasReferenceImage && !hasSelectedImage)}
               onClick={onEditColorRange}
               type="button"
             >
@@ -230,8 +298,9 @@ export function AdjustmentPanel({
           ) : null}
 
           <p className="mt-3 rounded-md bg-zinc-50 px-3 py-2 text-xs leading-5 text-zinc-500">
-            标准图参考区域：{maskStatusLabels[referenceMaskStatus]}；当前样品校色范围：
-            {maskStatusLabels[selectedSampleMaskStatus]}
+            {isFullImageScope
+              ? `整张样品图模式：不需要样品蒙版；标准图参考区域：${maskStatusLabels[referenceMaskStatus]}，未选择时使用标准图整图。`
+              : `标准图参考区域：${maskStatusLabels[referenceMaskStatus]}；当前样品校色范围：${maskStatusLabels[selectedSampleMaskStatus]}`}
           </p>
         </section>
 
@@ -298,7 +367,7 @@ export function AdjustmentPanel({
               <input
                 checked={isMaskVisible}
                 className="accent-teal-600"
-                disabled={!hasEditableImage}
+                disabled={!canUseMaskControls}
                 onChange={(event) => onToggleMaskVisible(event.currentTarget.checked)}
                 type="checkbox"
               />
@@ -312,7 +381,11 @@ export function AdjustmentPanel({
                 className={`rounded px-3 py-2 text-sm font-semibold ${
                   maskEditMode === mode ? "bg-white text-teal-700 shadow-sm" : "text-zinc-500"
                 }`}
-                disabled={mode === "reference" ? !hasReferenceImage : !hasSelectedImage}
+                disabled={
+                  mode === "reference"
+                    ? !hasReferenceImage
+                    : !hasSelectedImage || isFullImageScope
+                }
                 key={mode}
                 onClick={() => onMaskEditModeChange(mode)}
                 type="button"
@@ -328,7 +401,7 @@ export function AdjustmentPanel({
                 className={`rounded px-3 py-2 text-sm font-semibold ${
                   maskTool === tool ? "bg-white text-teal-700 shadow-sm" : "text-zinc-500"
                 }`}
-                disabled={!hasEditableImage}
+                disabled={!canUseMaskControls}
                 key={tool}
                 onClick={() => onMaskToolChange(tool)}
                 type="button"
@@ -345,7 +418,7 @@ export function AdjustmentPanel({
             </span>
             <input
               className="mt-2 h-2 w-full appearance-none rounded-full bg-zinc-200 accent-teal-600 disabled:cursor-not-allowed"
-              disabled={!hasEditableImage}
+              disabled={!canUseMaskControls}
               max={120}
               min={4}
               onChange={(event) => onBrushSizeChange(Number(event.currentTarget.value))}
@@ -361,7 +434,7 @@ export function AdjustmentPanel({
             </span>
             <input
               className="mt-2 h-2 w-full appearance-none rounded-full bg-zinc-200 accent-teal-600 disabled:cursor-not-allowed"
-              disabled={!hasEditableImage}
+              disabled={!canUseMaskControls}
               max={100}
               min={10}
               onChange={(event) => onMaskOpacityChange(Number(event.currentTarget.value))}
@@ -373,7 +446,7 @@ export function AdjustmentPanel({
           <div className="mt-4 grid grid-cols-3 gap-2">
             <button
               className="rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm font-semibold text-zinc-700 disabled:cursor-not-allowed disabled:opacity-45"
-              disabled={!hasEditableImage || !canUndoMask}
+              disabled={!canUseMaskControls || !canUndoMask}
               onClick={onUndoMask}
               type="button"
             >
@@ -381,7 +454,7 @@ export function AdjustmentPanel({
             </button>
             <button
               className="rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm font-semibold text-zinc-700 disabled:cursor-not-allowed disabled:opacity-45"
-              disabled={!hasEditableImage || !canRedoMask}
+              disabled={!canUseMaskControls || !canRedoMask}
               onClick={onRedoMask}
               type="button"
             >
@@ -389,7 +462,7 @@ export function AdjustmentPanel({
             </button>
             <button
               className="rounded-md border border-rose-200 bg-rose-50 px-2 py-2 text-sm font-semibold text-rose-700 disabled:cursor-not-allowed disabled:opacity-45"
-              disabled={!hasEditableImage}
+              disabled={!canUseMaskControls}
               onClick={onClearMask}
               type="button"
             >
@@ -397,11 +470,13 @@ export function AdjustmentPanel({
             </button>
           </div>
 
-          {!hasEditableImage ? (
+          {!hasEditableImage || (isFullImageScope && maskEditMode === "target") ? (
             <p className="mt-3 rounded-md bg-zinc-50 px-3 py-2 text-xs text-zinc-500">
-              {maskEditMode === "reference"
-                ? "上传标准图后可以选择衣服参考区域。"
-                : "上传并选择样品图后可以编辑蒙版。"}
+              {isFullImageScope && maskEditMode === "target"
+                ? "整张样品图模式不需要样品蒙版。"
+                : maskEditMode === "reference"
+                  ? "上传标准图后可以选择衣服参考区域。"
+                  : "上传并选择样品图后可以编辑蒙版。"}
             </p>
           ) : null}
         </section>
