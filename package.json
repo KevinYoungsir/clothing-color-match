@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -p tsconfig.app.json && tsc -p tsconfig.node.json && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "verify:export": "node scripts/verify-export.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",

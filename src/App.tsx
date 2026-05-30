@@ -27,7 +27,22 @@ import {
   type AdjustmentKey,
   type AdjustmentParams
 } from "./core/adjustment";
+import {
+  processBatchImages,
+  processSampleImage,
+  type AutoColorParams,
+  type BatchItemStatus,
+  type ProcessedSampleResult
+} from "./core/batchProcessor";
 import type { MaskEditMode, MaskPoint, MaskState, MaskTool, UploadedImage } from "./types";
+import {
+  downloadBlob,
+  exportImageDataToJpegBlob,
+  getExportFileName,
+  getExportLongEdge,
+  type ExportSize
+} from "./core/exportImage";
+import { createZipBlob } from "./core/simpleZip";
 
 export default function App() {
   const [referenceImage, setReferenceImage] = useState<UploadedImage | null>(null);
@@ -51,6 +66,10 @@ export default function App() {
   const [colorTransferError, setColorTransferError] = useState<string | null>(null);
   const [adjustmentError, setAdjustmentError] = useState<string | null>(null);
   const [isColorTransferRunning, setIsColorTransferRunning] = useState(false);
+  const [exportSize, setExportSize] = useState<ExportSize>("original");
+  const [batchStatuses, setBatchStatuses] = useState<Record<string, BatchItemStatus>>({});
+  const [exportMessage, setExportMessage] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
   const referenceImageRef = useRef<UploadedImage | null>(null);
   const sampleImagesRef = useRef<UploadedImage[]>([]);
 
@@ -69,6 +88,24 @@ export default function App() {
   const canUndoMask = (activeMaskState?.undoStack.length ?? 0) > 0;
   const canRedoMask = (activeMaskState?.redoStack.length ?? 0) > 0;
   const canApplyColorTransfer = Boolean(referenceImage && selectedSample && selectedMaskState);
+  const autoColorParams = useMemo<AutoColorParams>(
+    () => ({
+      colorStrength,
+      highlightProtection,
+      maskFeather,
+      shadowProtection
+    }),
+    [colorStrength, highlightProtection, maskFeather, shadowProtection]
+  );
+  const showUpscaleWarning = useMemo(() => {
+    const targetLongEdge = getExportLongEdge(exportSize);
+
+    if (!targetLongEdge) {
+      return false;
+    }
+
+    return sampleImages.some((image) => Math.max(image.width, image.height) < targetLongEdge);
+  }, [exportSize, sampleImages]);
 
   useEffect(() => {
     if (!selectedSampleId || !selectedSample) {
@@ -174,6 +211,8 @@ export default function App() {
       setUploadError(null);
       setColorTransferError(null);
       setAdjustmentError(null);
+      setBatchStatuses({});
+      setExportMessage(null);
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : "标准图读取失败");
     }
@@ -213,6 +252,8 @@ export default function App() {
       setSelectedSampleId((currentId) => currentId ?? loadedImages[0].id);
       setColorTransferError(null);
       setAdjustmentError(null);
+      setBatchStatuses({});
+      setExportMessage(null);
     }
 
     const messages = [...unsupportedMessages, ...failedMessages];
@@ -447,6 +488,186 @@ export default function App() {
     });
   }
 
+  async function loadReferenceImageDataForProcessing() {
+    if (!referenceImage) {
+      throw new Error("请先上传标准图");
+    }
+
+    if (!referenceMaskState || !hasMaskPixels(referenceMaskState.imageData)) {
+      setMaskEditMode("reference");
+      throw new Error("请先选择标准图衣服参考区域");
+    }
+
+    return loadImageDataFromUrl(referenceImage.url, referenceImage.width, referenceImage.height);
+  }
+
+  function storeProcessedResults(results: ProcessedSampleResult[]) {
+    setProcessedImages((currentImages) => {
+      const nextImages = { ...currentImages };
+
+      results.forEach((result) => {
+        nextImages[result.image.id] = result.colorTransferredImageData;
+      });
+
+      return nextImages;
+    });
+
+    setAdjustedImages((currentImages) => {
+      const nextImages = { ...currentImages };
+
+      results.forEach((result) => {
+        if (isDefaultAdjustmentParams(adjustmentParams)) {
+          delete nextImages[result.image.id];
+          return;
+        }
+
+        nextImages[result.image.id] = result.finalImageData;
+      });
+
+      return nextImages;
+    });
+  }
+
+  function setBatchStatus(status: BatchItemStatus) {
+    setBatchStatuses((currentStatuses) => ({
+      ...currentStatuses,
+      [status.imageId]: status
+    }));
+  }
+
+  async function handleCurrentDownload() {
+    if (!selectedSample) {
+      setExportMessage("请先选择一张样品图");
+      return;
+    }
+
+    const targetMask = maskStates[selectedSample.id]?.imageData;
+
+    if (!targetMask || !hasMaskPixels(targetMask)) {
+      setMaskEditMode("target");
+      setExportMessage("请先绘制样品图衣服蒙版");
+      setBatchStatus({
+        fileName: selectedSample.fileName,
+        imageId: selectedSample.id,
+        message: "缺少蒙版",
+        status: "missing-mask"
+      });
+      return;
+    }
+
+    setIsExporting(true);
+    setExportMessage("正在处理当前图片");
+    setBatchStatus({
+      fileName: selectedSample.fileName,
+      imageId: selectedSample.id,
+      message: "处理中",
+      status: "processing"
+    });
+
+    try {
+      const referenceImageData = await loadReferenceImageDataForProcessing();
+      const result = await processSampleImage({
+        adjustmentParams,
+        autoParams: autoColorParams,
+        referenceImageData,
+        referenceMask: referenceMaskState!.imageData,
+        sampleImage: selectedSample,
+        targetMask
+      });
+      const blob = await exportImageDataToJpegBlob(result.finalImageData, exportSize);
+      const fileName = getExportFileName(selectedSample.fileName, exportSize);
+
+      storeProcessedResults([result]);
+      downloadBlob(blob, fileName);
+      setBatchStatus({
+        fileName: selectedSample.fileName,
+        imageId: selectedSample.id,
+        message: "已下载",
+        status: "done"
+      });
+      setExportMessage(`已下载：${fileName}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "单张导出失败";
+
+      setBatchStatus({
+        fileName: selectedSample.fileName,
+        imageId: selectedSample.id,
+        message,
+        status: "failed"
+      });
+      setExportMessage(message);
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
+  async function handleBatchDownload() {
+    if (sampleImages.length === 0) {
+      setExportMessage("请先上传样品图");
+      return;
+    }
+
+    setIsExporting(true);
+    setExportMessage("正在读取标准图和参考区域");
+
+    try {
+      const referenceImageData = await loadReferenceImageDataForProcessing();
+
+      setExportMessage("正在批量处理样品图");
+      setBatchStatuses(
+        Object.fromEntries(
+          sampleImages.map((image) => [
+            image.id,
+            {
+              fileName: image.fileName,
+              imageId: image.id,
+              message: "等待",
+              status: "queued"
+            } satisfies BatchItemStatus
+          ])
+        )
+      );
+
+      const results = await processBatchImages({
+        adjustmentParams,
+        autoParams: autoColorParams,
+        masks: maskStates,
+        onStatusChange: setBatchStatus,
+        referenceImageData,
+        referenceMask: referenceMaskState!.imageData,
+        samples: sampleImages
+      });
+      const processedResults = results
+        .map((item) => item.result)
+        .filter((item): item is ProcessedSampleResult => Boolean(item));
+
+      storeProcessedResults(processedResults);
+
+      const files = await Promise.all(
+        processedResults.map(async (result) => ({
+          blob: await exportImageDataToJpegBlob(result.finalImageData, exportSize),
+          name: getExportFileName(result.image.fileName, exportSize)
+        }))
+      );
+
+      if (files.length === 0) {
+        throw new Error("没有可导出的图片，请检查样品图蒙版");
+      }
+
+      const zipBlob = await createZipBlob(files);
+      const zipName = `colorfixed_${exportSize}.zip`;
+      const skippedCount = results.filter((item) => item.status === "missing-mask").length;
+      const failedCount = results.filter((item) => item.status === "failed").length;
+
+      downloadBlob(zipBlob, zipName);
+      setExportMessage(`已生成：${zipName}。成功 ${files.length} 张，缺少蒙版 ${skippedCount} 张，失败 ${failedCount} 张。`);
+    } catch (error) {
+      setExportMessage(error instanceof Error ? error.message : "批量导出失败");
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
   async function handleApplyColorTransfer() {
     if (!referenceImage || !selectedSample || !selectedMaskState) {
       setColorTransferError("请先上传标准图、样品图，并绘制样品图蒙版");
@@ -559,7 +780,18 @@ export default function App() {
           />
         </section>
 
-        <ExportBar />
+        <ExportBar
+          batchStatuses={batchStatuses}
+          exportMessage={exportMessage}
+          exportSize={exportSize}
+          isExporting={isExporting}
+          onBatchDownload={handleBatchDownload}
+          onCurrentDownload={handleCurrentDownload}
+          onExportSizeChange={setExportSize}
+          sampleImages={sampleImages}
+          selectedImage={selectedSample}
+          showUpscaleWarning={showUpscaleWarning}
+        />
       </div>
     </main>
   );
