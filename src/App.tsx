@@ -11,6 +11,7 @@ import {
   loadImageFile
 } from "./core/imageLoader";
 import {
+  cloneImageData,
   clearMask,
   createMaskState,
   drawMaskStroke,
@@ -34,7 +35,15 @@ import {
   type BatchItemStatus,
   type ProcessedSampleResult
 } from "./core/batchProcessor";
-import type { MaskEditMode, MaskPoint, MaskState, MaskTool, UploadedImage } from "./types";
+import { generateAutoGarmentMask, type AutoMaskResult } from "./core/autoMask";
+import type {
+  MaskEditMode,
+  MaskPoint,
+  MaskRecognitionStatus,
+  MaskState,
+  MaskTool,
+  UploadedImage
+} from "./types";
 import {
   downloadBlob,
   exportImageDataToJpegBlob,
@@ -51,6 +60,9 @@ export default function App() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [referenceMaskState, setReferenceMaskState] = useState<MaskState | null>(null);
   const [maskStates, setMaskStates] = useState<Record<string, MaskState>>({});
+  const [referenceMaskStatus, setReferenceMaskStatus] =
+    useState<MaskRecognitionStatus>("unrecognized");
+  const [sampleMaskStatuses, setSampleMaskStatuses] = useState<Record<string, MaskRecognitionStatus>>({});
   const [maskEditMode, setMaskEditMode] = useState<MaskEditMode>("target");
   const [maskTool, setMaskTool] = useState<MaskTool>("brush");
   const [brushSize, setBrushSize] = useState(32);
@@ -64,6 +76,7 @@ export default function App() {
   const [adjustedImages, setAdjustedImages] = useState<Record<string, ImageData>>({});
   const [adjustmentParams, setAdjustmentParams] = useState<AdjustmentParams>(defaultAdjustmentParams);
   const [colorTransferError, setColorTransferError] = useState<string | null>(null);
+  const [autoMaskNotice, setAutoMaskNotice] = useState<string | null>(null);
   const [adjustmentError, setAdjustmentError] = useState<string | null>(null);
   const [isColorTransferRunning, setIsColorTransferRunning] = useState(false);
   const [exportSize, setExportSize] = useState<ExportSize>("original");
@@ -78,6 +91,9 @@ export default function App() {
     [sampleImages, selectedSampleId]
   );
   const selectedMaskState = selectedSampleId ? maskStates[selectedSampleId] ?? null : null;
+  const selectedSampleMaskStatus = selectedSampleId
+    ? sampleMaskStatuses[selectedSampleId] ?? "unrecognized"
+    : "unrecognized";
   const activeImage = maskEditMode === "reference" ? referenceImage : selectedSample;
   const activeMaskState = maskEditMode === "reference" ? referenceMaskState : selectedMaskState;
   const selectedProcessedImageData =
@@ -87,7 +103,7 @@ export default function App() {
   const selectedPreviewImageData = selectedAdjustedImageData ?? selectedProcessedImageData;
   const canUndoMask = (activeMaskState?.undoStack.length ?? 0) > 0;
   const canRedoMask = (activeMaskState?.redoStack.length ?? 0) > 0;
-  const canApplyColorTransfer = Boolean(referenceImage && selectedSample && selectedMaskState);
+  const canApplyColorTransfer = Boolean(referenceImage && selectedSample);
   const autoColorParams = useMemo<AutoColorParams>(
     () => ({
       colorStrength,
@@ -205,11 +221,13 @@ export default function App() {
         return image;
       });
       setReferenceMaskState(createMaskState(image.width, image.height));
+      setReferenceMaskStatus("unrecognized");
       setMaskEditMode("reference");
       setProcessedImages({});
       setAdjustedImages({});
       setUploadError(null);
       setColorTransferError(null);
+      setAutoMaskNotice(null);
       setAdjustmentError(null);
       setBatchStatuses({});
       setExportMessage(null);
@@ -249,8 +267,19 @@ export default function App() {
 
         return nextMasks;
       });
+      setSampleMaskStatuses((currentStatuses) => {
+        const nextStatuses = { ...currentStatuses };
+
+        loadedImages.forEach((image) => {
+          nextStatuses[image.id] = "unrecognized";
+        });
+
+        return nextStatuses;
+      });
       setSelectedSampleId((currentId) => currentId ?? loadedImages[0].id);
+      setMaskEditMode("target");
       setColorTransferError(null);
+      setAutoMaskNotice(null);
       setAdjustmentError(null);
       setBatchStatuses({});
       setExportMessage(null);
@@ -269,7 +298,9 @@ export default function App() {
       setReferenceMaskState((currentMask) =>
         pushUndoSnapshot(currentMask ?? createMaskState(referenceImage.width, referenceImage.height))
       );
+      setReferenceMaskStatus("manual");
       setColorTransferError(null);
+      setAutoMaskNotice(null);
       setProcessedImages({});
       setAdjustedImages({});
       return;
@@ -288,7 +319,12 @@ export default function App() {
         [selectedSample.id]: pushUndoSnapshot(currentMask)
       };
     });
+    setSampleMaskStatuses((currentStatuses) => ({
+      ...currentStatuses,
+      [selectedSample.id]: "manual"
+    }));
     setColorTransferError(null);
+    setAutoMaskNotice(null);
     setProcessedImages((currentImages) => {
       const { [selectedSample.id]: _removedImage, ...remainingImages } = currentImages;
       return remainingImages;
@@ -344,7 +380,9 @@ export default function App() {
   function handleUndoMask() {
     if (maskEditMode === "reference") {
       setReferenceMaskState((currentMask) => (currentMask ? undoMask(currentMask) : currentMask));
+      setReferenceMaskStatus("manual");
       setColorTransferError(null);
+      setAutoMaskNotice(null);
       setProcessedImages({});
       setAdjustedImages({});
       return;
@@ -366,7 +404,12 @@ export default function App() {
         [selectedSampleId]: undoMask(currentMask)
       };
     });
+    setSampleMaskStatuses((currentStatuses) => ({
+      ...currentStatuses,
+      [selectedSampleId]: "manual"
+    }));
     setColorTransferError(null);
+    setAutoMaskNotice(null);
     setProcessedImages((currentImages) => {
       const { [selectedSampleId]: _removedImage, ...remainingImages } = currentImages;
       return remainingImages;
@@ -381,7 +424,9 @@ export default function App() {
   function handleRedoMask() {
     if (maskEditMode === "reference") {
       setReferenceMaskState((currentMask) => (currentMask ? redoMask(currentMask) : currentMask));
+      setReferenceMaskStatus("manual");
       setColorTransferError(null);
+      setAutoMaskNotice(null);
       setProcessedImages({});
       setAdjustedImages({});
       return;
@@ -403,7 +448,12 @@ export default function App() {
         [selectedSampleId]: redoMask(currentMask)
       };
     });
+    setSampleMaskStatuses((currentStatuses) => ({
+      ...currentStatuses,
+      [selectedSampleId]: "manual"
+    }));
     setColorTransferError(null);
+    setAutoMaskNotice(null);
     setProcessedImages((currentImages) => {
       const { [selectedSampleId]: _removedImage, ...remainingImages } = currentImages;
       return remainingImages;
@@ -418,7 +468,9 @@ export default function App() {
   function handleClearMask() {
     if (maskEditMode === "reference") {
       setReferenceMaskState((currentMask) => (currentMask ? clearMask(currentMask) : currentMask));
+      setReferenceMaskStatus("unrecognized");
       setColorTransferError(null);
+      setAutoMaskNotice(null);
       setProcessedImages({});
       setAdjustedImages({});
       return;
@@ -440,7 +492,12 @@ export default function App() {
         [selectedSampleId]: clearMask(currentMask)
       };
     });
+    setSampleMaskStatuses((currentStatuses) => ({
+      ...currentStatuses,
+      [selectedSampleId]: "unrecognized"
+    }));
     setColorTransferError(null);
+    setAutoMaskNotice(null);
     setProcessedImages((currentImages) => {
       const { [selectedSampleId]: _removedImage, ...remainingImages } = currentImages;
       return remainingImages;
@@ -458,7 +515,7 @@ export default function App() {
     }
 
     if (!selectedMaskState || !hasMaskPixels(selectedMaskState.imageData)) {
-      setAdjustmentError("请先绘制样品图衣服蒙版");
+      setAdjustmentError("请先自动识别并校色，或点击编辑校色范围后修正蒙版");
       setMaskEditMode("target");
     }
 
@@ -488,17 +545,157 @@ export default function App() {
     });
   }
 
-  async function loadReferenceImageDataForProcessing() {
+  function createAutoMaskState(mask: ImageData, currentMask?: MaskState | null): MaskState {
+    const undoStack =
+      currentMask && hasMaskPixels(currentMask.imageData)
+        ? [...currentMask.undoStack, cloneImageData(currentMask.imageData)].slice(-30)
+        : [];
+
+    return {
+      imageData: mask,
+      redoStack: [],
+      undoStack
+    };
+  }
+
+  function getAutoMaskNotice(label: string, result: AutoMaskResult) {
+    if (result.reason) {
+      return `${label}：${result.reason}`;
+    }
+
+    return null;
+  }
+
+  function storeAutoTargetMask(image: UploadedImage, result: AutoMaskResult) {
+    setMaskStates((currentMasks) => ({
+      ...currentMasks,
+      [image.id]: createAutoMaskState(result.mask, currentMasks[image.id])
+    }));
+    setSampleMaskStatuses((currentStatuses) => ({
+      ...currentStatuses,
+      [image.id]: "auto"
+    }));
+  }
+
+  function clearSampleResult(imageId: string) {
+    setProcessedImages((currentImages) => {
+      const { [imageId]: _removedImage, ...remainingImages } = currentImages;
+      return remainingImages;
+    });
+    setAdjustedImages((currentImages) => {
+      const { [imageId]: _removedImage, ...remainingImages } = currentImages;
+      return remainingImages;
+    });
+  }
+
+  function ensureMaskConfidence(label: string, result: AutoMaskResult) {
+    if (!hasMaskPixels(result.mask) || result.confidence < 0.25) {
+      throw new Error(`${label}自动识别失败，请点击编辑校色范围后手动修正蒙版`);
+    }
+  }
+
+  function ensureReferenceMask(referenceImageData: ImageData) {
+    if (referenceMaskState && hasMaskPixels(referenceMaskState.imageData)) {
+      return referenceMaskState.imageData;
+    }
+
+    const autoMaskResult = generateAutoGarmentMask(referenceImageData, { feather: 2 });
+    ensureMaskConfidence("标准图", autoMaskResult);
+
+    setReferenceMaskState((currentMask) => createAutoMaskState(autoMaskResult.mask, currentMask));
+    setReferenceMaskStatus("auto");
+    setAutoMaskNotice(getAutoMaskNotice("标准图", autoMaskResult));
+
+    return autoMaskResult.mask;
+  }
+
+  function ensureTargetMask(sample: UploadedImage, targetImageData: ImageData) {
+    const currentMask = maskStates[sample.id];
+
+    if (currentMask && hasMaskPixels(currentMask.imageData)) {
+      return currentMask.imageData;
+    }
+
+    const autoMaskResult = generateAutoGarmentMask(targetImageData, { feather: 2 });
+    ensureMaskConfidence("样品图", autoMaskResult);
+    storeAutoTargetMask(sample, autoMaskResult);
+    setAutoMaskNotice(getAutoMaskNotice("样品图", autoMaskResult));
+
+    return autoMaskResult.mask;
+  }
+
+  async function loadReferenceForProcessing() {
     if (!referenceImage) {
       throw new Error("请先上传标准图");
     }
 
-    if (!referenceMaskState || !hasMaskPixels(referenceMaskState.imageData)) {
+    const referenceImageData = await loadImageDataFromUrl(referenceImage.url, referenceImage.width, referenceImage.height);
+    const referenceMask = ensureReferenceMask(referenceImageData);
+
+    return {
+      referenceImageData,
+      referenceMask
+    };
+  }
+
+  async function handleRegenerateAutoMask() {
+    setColorTransferError(null);
+    setAutoMaskNotice(null);
+
+    try {
+      if (maskEditMode === "reference") {
+        if (!referenceImage) {
+          setAutoMaskNotice("请先上传标准图");
+          return;
+        }
+
+        const referenceImageData = await loadImageDataFromUrl(
+          referenceImage.url,
+          referenceImage.width,
+          referenceImage.height
+        );
+        const autoMaskResult = generateAutoGarmentMask(referenceImageData, { feather: 2 });
+        ensureMaskConfidence("标准图", autoMaskResult);
+
+        setReferenceMaskState((currentMask) => createAutoMaskState(autoMaskResult.mask, currentMask));
+        setReferenceMaskStatus("auto");
+        setIsMaskVisible(true);
+        setProcessedImages({});
+        setAdjustedImages({});
+        setAutoMaskNotice(getAutoMaskNotice("标准图", autoMaskResult));
+        return;
+      }
+
+      if (!selectedSample) {
+        setAutoMaskNotice("请先选择样品图");
+        return;
+      }
+
+      const targetImageData = await loadImageDataFromUrl(
+        selectedSample.url,
+        selectedSample.width,
+        selectedSample.height
+      );
+      const autoMaskResult = generateAutoGarmentMask(targetImageData, { feather: 2 });
+      ensureMaskConfidence("样品图", autoMaskResult);
+
+      storeAutoTargetMask(selectedSample, autoMaskResult);
+      setIsMaskVisible(true);
+      clearSampleResult(selectedSample.id);
+      setAutoMaskNotice(getAutoMaskNotice("样品图", autoMaskResult));
+    } catch (error) {
+      setAutoMaskNotice(error instanceof Error ? error.message : "自动识别失败，请手动修正蒙版");
+    }
+  }
+
+  function handleEditColorRange() {
+    if (selectedSample) {
+      setMaskEditMode("target");
+    } else if (referenceImage) {
       setMaskEditMode("reference");
-      throw new Error("请先选择标准图衣服参考区域");
     }
 
-    return loadImageDataFromUrl(referenceImage.url, referenceImage.width, referenceImage.height);
+    setIsMaskVisible(true);
   }
 
   function storeProcessedResults(results: ProcessedSampleResult[]) {
@@ -541,20 +738,6 @@ export default function App() {
       return;
     }
 
-    const targetMask = maskStates[selectedSample.id]?.imageData;
-
-    if (!targetMask || !hasMaskPixels(targetMask)) {
-      setMaskEditMode("target");
-      setExportMessage("请先绘制样品图衣服蒙版");
-      setBatchStatus({
-        fileName: selectedSample.fileName,
-        imageId: selectedSample.id,
-        message: "缺少蒙版",
-        status: "missing-mask"
-      });
-      return;
-    }
-
     setIsExporting(true);
     setExportMessage("正在处理当前图片");
     setBatchStatus({
@@ -565,12 +748,18 @@ export default function App() {
     });
 
     try {
-      const referenceImageData = await loadReferenceImageDataForProcessing();
+      const { referenceImageData, referenceMask } = await loadReferenceForProcessing();
+      const targetImageData = await loadImageDataFromUrl(
+        selectedSample.url,
+        selectedSample.width,
+        selectedSample.height
+      );
+      const targetMask = ensureTargetMask(selectedSample, targetImageData);
       const result = await processSampleImage({
         adjustmentParams,
         autoParams: autoColorParams,
         referenceImageData,
-        referenceMask: referenceMaskState!.imageData,
+        referenceMask,
         sampleImage: selectedSample,
         targetMask
       });
@@ -611,7 +800,7 @@ export default function App() {
     setExportMessage("正在读取标准图和参考区域");
 
     try {
-      const referenceImageData = await loadReferenceImageDataForProcessing();
+      const { referenceImageData, referenceMask } = await loadReferenceForProcessing();
 
       setExportMessage("正在批量处理样品图");
       setBatchStatuses(
@@ -631,10 +820,14 @@ export default function App() {
       const results = await processBatchImages({
         adjustmentParams,
         autoParams: autoColorParams,
+        autoMaskFeather: 2,
         masks: maskStates,
+        onAutoMaskGenerated: (image, result) => {
+          storeAutoTargetMask(image, result);
+        },
         onStatusChange: setBatchStatus,
         referenceImageData,
-        referenceMask: referenceMaskState!.imageData,
+        referenceMask,
         samples: sampleImages
       });
       const processedResults = results
@@ -669,46 +862,39 @@ export default function App() {
   }
 
   async function handleApplyColorTransfer() {
-    if (!referenceImage || !selectedSample || !selectedMaskState) {
-      setColorTransferError("请先上传标准图、样品图，并绘制样品图蒙版");
-      return;
-    }
-
-    if (!referenceMaskState || !hasMaskPixels(referenceMaskState.imageData)) {
-      setColorTransferError("请先选择标准图衣服参考区域");
-      setMaskEditMode("reference");
-      return;
-    }
-
-    if (!hasMaskPixels(selectedMaskState.imageData)) {
-      setColorTransferError("请先在样品图衣服区域绘制蒙版");
-      setMaskEditMode("target");
+    if (!referenceImage || !selectedSample) {
+      setColorTransferError("请先上传标准图和样品图");
       return;
     }
 
     setIsColorTransferRunning(true);
     setColorTransferError(null);
+    setAutoMaskNotice(null);
 
     try {
       const [referenceImageData, targetImageData] = await Promise.all([
         loadImageDataFromUrl(referenceImage.url, referenceImage.width, referenceImage.height),
         loadImageDataFromUrl(selectedSample.url, selectedSample.width, selectedSample.height)
       ]);
+      const referenceMask = ensureReferenceMask(referenceImageData);
+      const targetMask = ensureTargetMask(selectedSample, targetImageData);
       const result = transferLabColor({
         colorStrength,
         highlightProtection,
         maskFeather,
         referenceImageData,
-        referenceMask: referenceMaskState.imageData,
+        referenceMask,
         shadowProtection,
         targetImageData,
-        targetMask: selectedMaskState.imageData
+        targetMask
       });
 
       setProcessedImages((currentImages) => ({
         ...currentImages,
         [selectedSample.id]: result.imageData
       }));
+      setMaskEditMode("target");
+      setIsMaskVisible(true);
     } catch (error) {
       setColorTransferError(error instanceof Error ? error.message : "自动校色失败");
     } finally {
@@ -728,6 +914,7 @@ export default function App() {
             onSampleUpload={handleSampleUpload}
             referenceImage={referenceImage}
             sampleImages={sampleImages}
+            sampleMaskStatuses={sampleMaskStatuses}
             selectedSampleId={selectedSampleId}
             uploadError={uploadError}
           />
@@ -751,6 +938,8 @@ export default function App() {
             canUndoMask={canUndoMask}
             colorStrength={colorStrength}
             colorTransferError={colorTransferError}
+            autoMaskNotice={autoMaskNotice}
+            hasColorResult={Boolean(selectedPreviewImageData)}
             hasReferenceImage={Boolean(referenceImage)}
             hasSelectedImage={Boolean(selectedSample)}
             highlightProtection={highlightProtection}
@@ -760,9 +949,12 @@ export default function App() {
             maskOpacity={maskOpacity}
             maskFeather={maskFeather}
             maskTool={maskTool}
+            referenceMaskStatus={referenceMaskStatus}
+            selectedSampleMaskStatus={selectedSampleMaskStatus}
             onBrushSizeChange={setBrushSize}
             onColorStrengthChange={setColorStrength}
             onClearMask={handleClearMask}
+            onEditColorRange={handleEditColorRange}
             onHighlightProtectionChange={setHighlightProtection}
             onApplyColorTransfer={handleApplyColorTransfer}
             onAdjustmentParamChange={handleAdjustmentParamChange}
@@ -771,6 +963,7 @@ export default function App() {
             onMaskFeatherChange={setMaskFeather}
             onMaskToolChange={setMaskTool}
             onRedoMask={handleRedoMask}
+            onRegenerateAutoMask={handleRegenerateAutoMask}
             onResetAdjustmentParam={handleResetAdjustmentParam}
             onResetAllAdjustments={handleResetAllAdjustments}
             onShadowProtectionChange={setShadowProtection}

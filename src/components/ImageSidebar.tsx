@@ -1,9 +1,10 @@
 import type { ChangeEvent } from "react";
-import type { UploadedImage } from "../types";
+import type { MaskRecognitionStatus, UploadedImage } from "../types";
 
 type ImageSidebarProps = {
   referenceImage: UploadedImage | null;
   sampleImages: UploadedImage[];
+  sampleMaskStatuses: Record<string, MaskRecognitionStatus>;
   selectedSampleId: string | null;
   uploadError: string | null;
   onReferenceUpload: (files: FileList | null) => void;
@@ -12,10 +13,22 @@ type ImageSidebarProps = {
 };
 
 const acceptedImageTypes = "image/jpeg,image/png,image/webp";
+const maskStatusLabels: Record<MaskRecognitionStatus, string> = {
+  auto: "自动识别",
+  manual: "手动修正",
+  unrecognized: "未识别"
+};
+
+const maskStatusClasses: Record<MaskRecognitionStatus, string> = {
+  auto: "bg-sky-50 text-sky-700",
+  manual: "bg-emerald-50 text-emerald-700",
+  unrecognized: "bg-zinc-100 text-zinc-500"
+};
 
 export function ImageSidebar({
   referenceImage,
   sampleImages,
+  sampleMaskStatuses,
   selectedSampleId,
   uploadError,
   onReferenceUpload,
@@ -105,6 +118,7 @@ export function ImageSidebar({
 
           {sampleImages.map((image, index) => {
             const isSelected = image.id === selectedSampleId;
+            const maskStatus = sampleMaskStatuses[image.id] ?? "unrecognized";
 
             return (
               <button
@@ -125,7 +139,16 @@ export function ImageSidebar({
                   />
                 </span>
                 <span className="flex min-w-0 flex-col justify-center">
-                  <span className="text-sm font-medium text-zinc-700">样品 {index + 1}</span>
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-medium text-zinc-700">样品 {index + 1}</span>
+                    <span
+                      className={`shrink-0 rounded px-2 py-0.5 text-[11px] font-semibold ${
+                        maskStatusClasses[maskStatus]
+                      }`}
+                    >
+                      {maskStatusLabels[maskStatus]}
+                    </span>
+                  </span>
                   <span className="truncate text-xs text-zinc-500">{image.fileName}</span>
                   <span className="text-xs text-zinc-400">
                     {image.width} x {image.height}px
