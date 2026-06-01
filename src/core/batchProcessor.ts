@@ -243,6 +243,7 @@ export async function processBatchImages({
     const maskStatus = maskStatuses[sample.id] ?? "unrecognized";
     const garmentRoi = garmentRois[sample.id] ?? null;
     let targetMask: ImageData | null = maskState?.imageData ?? null;
+    let segmentationMessage: string | undefined;
 
     onStatusChange?.(createStatus(sample, "processing", "处理中"));
 
@@ -281,6 +282,7 @@ export async function processBatchImages({
         }
 
         targetMask = autoMaskResult.mask;
+        segmentationMessage = autoMaskResult.fallbackProvider ? autoMaskResult.message : undefined;
         onAutoMaskGenerated?.(sample, autoMaskResult);
       }
 
@@ -293,7 +295,11 @@ export async function processBatchImages({
         autoParams,
         adjustmentParams
       );
-      const status = createStatus(sample, "done", "已完成");
+      const status = createStatus(
+        sample,
+        "done",
+        segmentationMessage ? `已完成（${segmentationMessage}）` : "已完成"
+      );
 
       onStatusChange?.(status);
       results.push({

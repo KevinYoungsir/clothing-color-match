@@ -960,17 +960,30 @@ export default function App() {
   }
 
   function handleSegmentationProviderTypeChange(providerType: SegmentationProviderType) {
+    const isRemoteAiConfigured = Boolean(import.meta.env.VITE_AI_SEGMENTATION_API);
+
     setSegmentationProviderType(providerType);
     setColorTransferError(null);
     setAdjustmentError(null);
     setBatchColorMessage(null);
     setBatchColorProgress(null);
     setExportMessage(null);
-    setAutoMaskNotice(
-      providerType === "traditional"
-        ? null
-        : "AI 分割接口已预留，尚未接入模型；自动识别时会回退到传统识别。"
-    );
+
+    if (providerType === "traditional") {
+      setAutoMaskNotice(null);
+      return;
+    }
+
+    if (providerType === "remote-ai") {
+      setAutoMaskNotice(
+        isRemoteAiConfigured
+          ? "远程 AI 识别已启用；请求失败时会自动回退到传统识别。"
+          : "远程 AI 服务未配置，将使用传统识别。"
+      );
+      return;
+    }
+
+    setAutoMaskNotice("AI 分割接口已预留，尚未接入模型；自动识别时会回退到传统识别。");
   }
 
   function handleSmartColorOptimizationChange(isEnabled: boolean) {

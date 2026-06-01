@@ -152,8 +152,15 @@ const segmentationProviderOptions: Array<{
     description: "预留 AI 分割接口；暂未接入模型，识别时会自动回退到传统识别。",
     label: "AI识别，实验性",
     value: "ai-placeholder"
+  },
+  {
+    description: "调用 VITE_AI_SEGMENTATION_API 配置的远程服务；失败时回退传统识别。",
+    label: "远程 AI 识别",
+    value: "remote-ai"
   }
 ];
+
+const isRemoteAiConfigured = Boolean(import.meta.env.VITE_AI_SEGMENTATION_API);
 
 const colorDifferenceLabels: Record<ColorDifferenceResult["assessment"], {
   className: string;
@@ -285,7 +292,7 @@ export function AdjustmentPanel({
 
           <div className="mt-3">
             <p className="text-xs font-medium text-zinc-500">识别方式</p>
-            <div className="mt-2 grid grid-cols-2 gap-2">
+            <div className="mt-2 grid gap-2">
               {segmentationProviderOptions.map((option) => (
                 <button
                   className={`rounded-md border px-3 py-2 text-left transition ${
@@ -304,9 +311,19 @@ export function AdjustmentPanel({
                 </button>
               ))}
             </div>
-            {segmentationProviderType !== "traditional" ? (
+            {segmentationProviderType === "ai-placeholder" ? (
               <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
                 AI 分割接口已预留，尚未接入模型；本次识别会自动回退到传统识别。
+              </p>
+            ) : null}
+            {segmentationProviderType === "remote-ai" && !isRemoteAiConfigured ? (
+              <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+                远程 AI 服务未配置，将使用传统识别。
+              </p>
+            ) : null}
+            {segmentationProviderType === "remote-ai" && isRemoteAiConfigured ? (
+              <p className="mt-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">
+                将调用远程 AI 分割服务；请求失败时会自动回退到传统识别。
               </p>
             ) : null}
           </div>

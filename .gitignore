@@ -2,3 +2,8 @@ node_modules/
 dist/
 .env
 .DS_Store
+
+# Python / AI server local files
+__pycache__/
+*.pyc
+ai-server/.venv/
