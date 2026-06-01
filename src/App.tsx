@@ -39,6 +39,7 @@ import {
 import { generateAutoGarmentMask, type AutoMaskResult } from "./core/autoMask";
 import type {
   ColorCorrectionScope,
+  GarmentRoi,
   MaskEditMode,
   MaskPoint,
   MaskRecognitionStatus,
@@ -69,6 +70,8 @@ export default function App() {
   const [selectedSampleIds, setSelectedSampleIds] = useState<string[]>([]);
   const [sampleProcessStatuses, setSampleProcessStatuses] = useState<Record<string, SampleProcessStatus>>({});
   const [sampleProcessMessages, setSampleProcessMessages] = useState<Record<string, string>>({});
+  const [garmentRoiMap, setGarmentRoiMap] = useState<Record<string, GarmentRoi>>({});
+  const [isRoiSelectionActive, setIsRoiSelectionActive] = useState(false);
   const [colorCorrectionScope, setColorCorrectionScope] =
     useState<ColorCorrectionScope>("auto-garment");
   const [maskEditMode, setMaskEditMode] = useState<MaskEditMode>("target");
@@ -111,8 +114,10 @@ export default function App() {
   const selectedSampleMaskStatus = selectedSampleId
     ? sampleMaskStatuses[selectedSampleId] ?? "unrecognized"
     : "unrecognized";
+  const selectedGarmentRoi = selectedSampleId ? garmentRoiMap[selectedSampleId] ?? null : null;
   const activeImage = maskEditMode === "reference" ? referenceImage : selectedSample;
   const activeMaskState = maskEditMode === "reference" ? referenceMaskState : selectedMaskState;
+  const activeGarmentRoi = maskEditMode === "target" ? selectedGarmentRoi : null;
   const selectedProcessedImageData =
     maskEditMode === "target" && selectedSampleId ? processedImages[selectedSampleId] ?? null : null;
   const selectedAdjustedImageData =
@@ -256,6 +261,7 @@ export default function App() {
       setReferenceMaskStatus("unrecognized");
       setMaskEditMode("reference");
       setIsMaskEditingActive(false);
+      setIsRoiSelectionActive(false);
       setIsMaskVisible(false);
       setProcessedImages({});
       setAdjustedImages({});
@@ -296,6 +302,15 @@ export default function App() {
 
     if (loadedImages.length > 0) {
       setSampleImages((currentImages) => [...currentImages, ...loadedImages]);
+      setGarmentRoiMap((currentRois) => {
+        const nextRois = { ...currentRois };
+
+        loadedImages.forEach((image) => {
+          delete nextRois[image.id];
+        });
+
+        return nextRois;
+      });
       setMaskStates((currentMasks) => {
         const nextMasks = { ...currentMasks };
 
@@ -335,6 +350,7 @@ export default function App() {
       setSelectedSampleId((currentId) => currentId ?? loadedImages[0].id);
       setMaskEditMode("target");
       setIsMaskEditingActive(false);
+      setIsRoiSelectionActive(false);
       setIsMaskVisible(false);
       setColorTransferError(null);
       setAutoMaskNotice(null);
@@ -359,6 +375,7 @@ export default function App() {
         pushUndoSnapshot(currentMask ?? createMaskState(referenceImage.width, referenceImage.height))
       );
       setIsMaskEditingActive(true);
+      setIsRoiSelectionActive(false);
       setIsMaskVisible(true);
       setReferenceMaskStatus("manual");
       setColorTransferError(null);
@@ -675,6 +692,56 @@ export default function App() {
     });
   }
 
+  function handleStartGarmentRoiSelection() {
+    if (!selectedSample) {
+      setAutoMaskNotice("请先选择样品图");
+      return;
+    }
+
+    setMaskEditMode("target");
+    setIsMaskEditingActive(false);
+    setIsMaskVisible(false);
+    setIsRoiSelectionActive(true);
+    setAutoMaskNotice("请在画布上拖拽矩形框，圈出服装主体区域。");
+  }
+
+  function handleGarmentRoiChange(roi: GarmentRoi) {
+    if (!selectedSample) {
+      return;
+    }
+
+    setGarmentRoiMap((currentRois) => ({
+      ...currentRois,
+      [selectedSample.id]: roi
+    }));
+    clearSampleResult(selectedSample.id);
+    setSampleMaskStatuses((currentStatuses) =>
+      currentStatuses[selectedSample.id] === "manual"
+        ? currentStatuses
+        : {
+            ...currentStatuses,
+            [selectedSample.id]: "unrecognized"
+          }
+    );
+    setIsRoiSelectionActive(false);
+    setMaskEditMode("target");
+    setAutoMaskNotice("已保存服装框选区域，自动识别将只在框选范围内运行。");
+  }
+
+  function handleClearGarmentRoi() {
+    if (!selectedSampleId) {
+      return;
+    }
+
+    setGarmentRoiMap((currentRois) => {
+      const { [selectedSampleId]: _removedRoi, ...remainingRois } = currentRois;
+      return remainingRois;
+    });
+    clearSampleResult(selectedSampleId);
+    setIsRoiSelectionActive(false);
+    setAutoMaskNotice("已清除当前样品图的服装框选区域。");
+  }
+
   function handleSampleSelectionChange(imageId: string, isSelected: boolean) {
     setSelectedSampleIds((currentIds) => {
       if (isSelected) {
@@ -750,6 +817,7 @@ export default function App() {
     setBatchColorMessage(null);
     setBatchColorProgress(null);
     setExportMessage(null);
+    setIsRoiSelectionActive(false);
 
     if (scope === "full-image") {
       setMaskEditMode("target");
@@ -793,6 +861,7 @@ export default function App() {
     }
 
     setIsMaskEditingActive(true);
+    setIsRoiSelectionActive(false);
     setIsMaskVisible(true);
     setAutoMaskNotice(message);
   }
@@ -829,7 +898,11 @@ export default function App() {
 
     const currentMask = maskStates[sample.id];
 
-    if (currentMask && hasMaskPixels(currentMask.imageData)) {
+    if (
+      currentMask &&
+      hasMaskPixels(currentMask.imageData) &&
+      (!garmentRoiMap[sample.id] || sampleMaskStatuses[sample.id] === "manual")
+    ) {
       return currentMask.imageData;
     }
 
@@ -837,7 +910,10 @@ export default function App() {
       throw new Error("样品图缺少手动蒙版，请点击编辑校色范围手动绘制。");
     }
 
-    const autoMaskResult = generateAutoGarmentMask(targetImageData, { feather: 2 });
+    const autoMaskResult = generateAutoGarmentMask(targetImageData, {
+      feather: 2,
+      roi: garmentRoiMap[sample.id] ?? null
+    });
     ensureMaskConfidence("样品图", autoMaskResult);
     storeAutoTargetMask(sample, autoMaskResult);
     setAutoMaskNotice(getAutoMaskNotice("样品图", autoMaskResult));
@@ -913,7 +989,10 @@ export default function App() {
         selectedSample.width,
         selectedSample.height
       );
-      const autoMaskResult = generateAutoGarmentMask(targetImageData, { feather: 2 });
+      const autoMaskResult = generateAutoGarmentMask(targetImageData, {
+        feather: 2,
+        roi: garmentRoiMap[selectedSample.id] ?? null
+      });
       ensureMaskConfidence("样品图", autoMaskResult);
 
       storeAutoTargetMask(selectedSample, autoMaskResult);
@@ -933,6 +1012,7 @@ export default function App() {
       setColorCorrectionScope("manual-mask");
       setMaskEditMode("target");
       setIsMaskEditingActive(true);
+      setIsRoiSelectionActive(false);
       setIsMaskVisible(true);
       setAutoMaskNotice("已切换到手动蒙版模式，请绘制样品图校色范围。");
       setProcessedImages({});
@@ -947,6 +1027,7 @@ export default function App() {
     }
 
     setIsMaskEditingActive(true);
+    setIsRoiSelectionActive(false);
     setIsMaskVisible(true);
   }
 
@@ -954,6 +1035,7 @@ export default function App() {
     if (colorCorrectionScope === "full-image" && mode === "target") {
       setMaskEditMode("target");
       setIsMaskEditingActive(false);
+      setIsRoiSelectionActive(false);
       setIsMaskVisible(false);
       setAutoMaskNotice("整张样品图模式不需要样品蒙版。");
       return;
@@ -961,12 +1043,14 @@ export default function App() {
 
     setMaskEditMode(mode);
     setIsMaskEditingActive(true);
+    setIsRoiSelectionActive(false);
     setIsMaskVisible(true);
   }
 
   function handleToggleMaskVisible(isVisible: boolean) {
     if (colorCorrectionScope === "full-image" && maskEditMode === "target" && isVisible) {
       setIsMaskEditingActive(false);
+      setIsRoiSelectionActive(false);
       setIsMaskVisible(false);
       setAutoMaskNotice("整张样品图模式不需要显示样品蒙版。");
       return;
@@ -976,6 +1060,7 @@ export default function App() {
 
     if (isVisible) {
       setIsMaskEditingActive(true);
+      setIsRoiSelectionActive(false);
     }
   }
 
@@ -1090,7 +1175,9 @@ export default function App() {
         adjustmentParams,
         autoParams: autoColorParams,
         autoMaskFeather: 2,
+        garmentRois: garmentRoiMap,
         masks: maskStates,
+        maskStatuses: sampleMaskStatuses,
         onAutoMaskGenerated: (image, result) => {
           storeAutoTargetMask(image, result);
         },
@@ -1262,7 +1349,9 @@ export default function App() {
           adjustmentParams,
           autoParams: autoColorParams,
           autoMaskFeather: 2,
+          garmentRois: garmentRoiMap,
           masks: maskStates,
+          maskStatuses: sampleMaskStatuses,
           onAutoMaskGenerated: (image, result) => {
             storeAutoTargetMask(image, result);
           },
@@ -1345,6 +1434,7 @@ export default function App() {
       }));
       setMaskEditMode("target");
       setIsMaskEditingActive(false);
+      setIsRoiSelectionActive(false);
       setIsMaskVisible(false);
       setAutoMaskNotice(
         colorCorrectionScope === "full-image"
@@ -1392,12 +1482,15 @@ export default function App() {
           />
           <CanvasWorkspace
             brushSize={brushSize}
+            garmentRoi={activeGarmentRoi}
             isMaskEditingActive={isMaskEditingActive}
             isMaskVisible={isMaskVisible}
+            isRoiSelectionActive={isRoiSelectionActive}
             maskTool={maskTool}
             maskOpacity={maskOpacity}
             maskState={activeMaskState}
             mode={maskEditMode}
+            onGarmentRoiChange={handleGarmentRoiChange}
             onMaskStroke={handleMaskStroke}
             onMaskStrokeStart={handleMaskStrokeStart}
             processedImageData={selectedPreviewImageData}
@@ -1416,6 +1509,7 @@ export default function App() {
             colorStrength={colorStrength}
             colorTransferError={colorTransferError}
             autoMaskNotice={autoMaskNotice}
+            hasGarmentRoi={Boolean(selectedGarmentRoi)}
             hasColorResult={Boolean(
               selectedPreviewImageData ||
                 (colorCorrectionScope !== "full-image" && selectedSampleMaskStatus !== "unrecognized")
@@ -1435,6 +1529,7 @@ export default function App() {
             onBrushSizeChange={setBrushSize}
             onColorCorrectionScopeChange={handleColorCorrectionScopeChange}
             onColorStrengthChange={setColorStrength}
+            onClearGarmentRoi={handleClearGarmentRoi}
             onClearMask={handleClearMask}
             onEditColorRange={handleEditColorRange}
             onHighlightProtectionChange={setHighlightProtection}
@@ -1449,6 +1544,7 @@ export default function App() {
             onResetAdjustmentParam={handleResetAdjustmentParam}
             onResetAllAdjustments={handleResetAllAdjustments}
             onShadowProtectionChange={setShadowProtection}
+            onStartGarmentRoiSelection={handleStartGarmentRoiSelection}
             onToggleMaskVisible={handleToggleMaskVisible}
             onUndoMask={handleUndoMask}
             shadowProtection={shadowProtection}

@@ -15,6 +15,7 @@ type AdjustmentPanelProps = {
   colorStrength: number;
   colorTransferError: string | null;
   hasColorResult: boolean;
+  hasGarmentRoi: boolean;
   hasReferenceImage: boolean;
   hasSelectedImage: boolean;
   highlightProtection: number;
@@ -28,6 +29,7 @@ type AdjustmentPanelProps = {
   referenceMaskStatus: MaskRecognitionStatus;
   selectedSampleMaskStatus: MaskRecognitionStatus;
   onBrushSizeChange: (value: number) => void;
+  onClearGarmentRoi: () => void;
   onColorCorrectionScopeChange: (scope: ColorCorrectionScope) => void;
   onColorStrengthChange: (value: number) => void;
   onApplyColorTransfer: () => void;
@@ -44,6 +46,7 @@ type AdjustmentPanelProps = {
   onResetAdjustmentParam: (key: AdjustmentKey) => void;
   onResetAllAdjustments: () => void;
   onShadowProtectionChange: (value: number) => void;
+  onStartGarmentRoiSelection: () => void;
   onToggleMaskVisible: (isVisible: boolean) => void;
   onUndoMask: () => void;
   shadowProtection: number;
@@ -112,6 +115,7 @@ export function AdjustmentPanel({
   colorStrength,
   colorTransferError,
   hasColorResult,
+  hasGarmentRoi,
   hasReferenceImage,
   hasSelectedImage,
   highlightProtection,
@@ -125,6 +129,7 @@ export function AdjustmentPanel({
   referenceMaskStatus,
   selectedSampleMaskStatus,
   onBrushSizeChange,
+  onClearGarmentRoi,
   onColorCorrectionScopeChange,
   onColorStrengthChange,
   onApplyColorTransfer,
@@ -141,6 +146,7 @@ export function AdjustmentPanel({
   onResetAdjustmentParam,
   onResetAllAdjustments,
   onShadowProtectionChange,
+  onStartGarmentRoiSelection,
   onToggleMaskVisible,
   onUndoMask,
   shadowProtection
@@ -294,6 +300,31 @@ export function AdjustmentPanel({
             </button>
           </div>
 
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <button
+              className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 disabled:cursor-not-allowed disabled:opacity-45"
+              disabled={
+                isBatchColoring ||
+                isColorTransferRunning ||
+                isFullImageScope ||
+                isManualMaskScope ||
+                !hasSelectedImage
+              }
+              onClick={onStartGarmentRoiSelection}
+              type="button"
+            >
+              框选服装区域
+            </button>
+            <button
+              className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 disabled:cursor-not-allowed disabled:opacity-45"
+              disabled={!hasGarmentRoi || isBatchColoring || isColorTransferRunning}
+              onClick={onClearGarmentRoi}
+              type="button"
+            >
+              清除框选区域
+            </button>
+          </div>
+
           {colorTransferError ? (
             <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">
               {colorTransferError}
@@ -342,7 +373,7 @@ export function AdjustmentPanel({
           <p className="mt-3 rounded-md bg-zinc-50 px-3 py-2 text-xs leading-5 text-zinc-500">
             {isFullImageScope
               ? `整张样品图模式：不需要样品蒙版；标准图参考区域：${maskStatusLabels[referenceMaskStatus]}，未选择时使用标准图整图。`
-              : `标准图参考区域：${maskStatusLabels[referenceMaskStatus]}；当前样品校色范围：${maskStatusLabels[selectedSampleMaskStatus]}`}
+              : `标准图参考区域：${maskStatusLabels[referenceMaskStatus]}；当前样品校色范围：${maskStatusLabels[selectedSampleMaskStatus]}${hasGarmentRoi ? "；已启用服装框选辅助识别" : ""}`}
           </p>
         </section>
 

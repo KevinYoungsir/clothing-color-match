@@ -7,7 +7,14 @@ import { generateAutoGarmentMask, type AutoMaskResult } from "./autoMask";
 import { transferLabColor } from "./colorTransfer";
 import { loadImageDataFromUrl } from "./imageLoader";
 import { hasMaskPixels } from "./maskUtils";
-import type { ColorCorrectionScope, MaskState, SampleProcessStatus, UploadedImage } from "../types";
+import type {
+  ColorCorrectionScope,
+  GarmentRoi,
+  MaskRecognitionStatus,
+  MaskState,
+  SampleProcessStatus,
+  UploadedImage
+} from "../types";
 
 export type AutoColorParams = {
   colorStrength: number;
@@ -50,11 +57,13 @@ type ProcessBatchImagesOptions = {
   adjustmentParams: AdjustmentParams;
   autoParams: AutoColorParams;
   masks: Record<string, MaskState>;
+  maskStatuses?: Record<string, MaskRecognitionStatus>;
   onStatusChange?: (status: BatchItemStatus) => void;
   referenceImageData: ImageData;
   referenceMask?: ImageData | null;
   samples: UploadedImage[];
   autoMaskFeather?: number;
+  garmentRois?: Record<string, GarmentRoi>;
   minAutoMaskConfidence?: number;
   onAutoMaskGenerated?: (image: UploadedImage, result: AutoMaskResult) => void;
 };
@@ -189,7 +198,9 @@ export async function processBatchImages({
   adjustmentParams,
   autoParams,
   autoMaskFeather = 2,
+  garmentRois = {},
   masks,
+  maskStatuses = {},
   minAutoMaskConfidence = 0.45,
   onAutoMaskGenerated,
   onStatusChange,
@@ -202,22 +213,31 @@ export async function processBatchImages({
 
   for (const sample of samples) {
     const maskState = masks[sample.id];
+    const maskStatus = maskStatuses[sample.id] ?? "unrecognized";
+    const garmentRoi = garmentRois[sample.id] ?? null;
     let targetMask: ImageData | null = maskState?.imageData ?? null;
 
     onStatusChange?.(createStatus(sample, "processing", "处理中"));
 
     try {
       const originalImageData = await loadImageDataFromUrl(sample.url, sample.width, sample.height);
+      const hasCurrentTargetMask = Boolean(targetMask && hasMaskPixels(targetMask));
+      const shouldUseCurrentMask = hasCurrentTargetMask && (!garmentRoi || maskStatus === "manual");
 
       if (scope === "full-image") {
         targetMask = null;
-      } else if (scope === "manual-mask" && (!targetMask || !hasMaskPixels(targetMask))) {
-        const status = createStatus(sample, "missing-mask", "缺少蒙版");
-        onStatusChange?.(status);
-        results.push(status);
-        continue;
-      } else if (!targetMask || !hasMaskPixels(targetMask)) {
-        const autoMaskResult = generateAutoGarmentMask(originalImageData, { feather: autoMaskFeather });
+      } else if (scope === "manual-mask") {
+        if (!hasCurrentTargetMask) {
+          const status = createStatus(sample, "missing-mask", "缺少蒙版");
+          onStatusChange?.(status);
+          results.push(status);
+          continue;
+        }
+      } else if (!shouldUseCurrentMask) {
+        const autoMaskResult = generateAutoGarmentMask(originalImageData, {
+          feather: autoMaskFeather,
+          roi: garmentRoi
+        });
 
         if (!isAutoMaskResultUsable(autoMaskResult, minAutoMaskConfidence)) {
           const status = createStatus(sample, "needs-manual-fix", "需手动修正");

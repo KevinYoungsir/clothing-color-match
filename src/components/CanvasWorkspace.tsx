@@ -1,19 +1,22 @@
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 import { getContainLayout } from "../core/maskUtils";
-import type { MaskEditMode, MaskPoint, MaskState, MaskTool, UploadedImage } from "../types";
+import type { GarmentRoi, MaskEditMode, MaskPoint, MaskState, MaskTool, UploadedImage } from "../types";
 
 type CompareMode = "single" | "sideBySide" | "split";
 
 type CanvasWorkspaceProps = {
   brushSize: number;
+  garmentRoi: GarmentRoi | null;
   isMaskEditingActive: boolean;
   isMaskVisible: boolean;
+  isRoiSelectionActive: boolean;
   maskTool: MaskTool;
   maskOpacity: number;
   maskState: MaskState | null;
   mode: MaskEditMode;
   onMaskStroke: (from: MaskPoint, to: MaskPoint, brushSizeInImagePixels: number) => void;
   onMaskStrokeStart: () => void;
+  onGarmentRoiChange: (roi: GarmentRoi) => void;
   processedImageData: ImageData | null;
   selectedImage: UploadedImage | null;
 };
@@ -24,14 +27,17 @@ const zoomLevels = [1, 1.5, 2, 3];
 
 export function CanvasWorkspace({
   brushSize,
+  garmentRoi,
   isMaskEditingActive,
   isMaskVisible,
+  isRoiSelectionActive,
   maskTool,
   maskOpacity,
   maskState,
   mode,
   onMaskStroke,
   onMaskStrokeStart,
+  onGarmentRoiChange,
   processedImageData,
   selectedImage
 }: CanvasWorkspaceProps) {
@@ -39,10 +45,13 @@ export function CanvasWorkspace({
   const imageRef = useRef<HTMLImageElement | null>(null);
   const imageUrlRef = useRef<string | null>(null);
   const previousPointRef = useRef<MaskPoint | null>(null);
+  const roiStartPointRef = useRef<MaskPoint | null>(null);
   const [compareMode, setCompareMode] = useState<CompareMode>("single");
   const [isDrawing, setIsDrawing] = useState(false);
+  const [isDrawingRoi, setIsDrawingRoi] = useState(false);
   const [isDraggingSplit, setIsDraggingSplit] = useState(false);
   const [isHoldingOriginal, setIsHoldingOriginal] = useState(false);
+  const [roiDraft, setRoiDraft] = useState<GarmentRoi | null>(null);
   const [splitPosition, setSplitPosition] = useState(50);
   const [zoomIndex, setZoomIndex] = useState(0);
   const [brushCursor, setBrushCursor] = useState<{
@@ -56,7 +65,9 @@ export function CanvasWorkspace({
   const canEditMask = Boolean(
     isMaskEditingActive && selectedImage && (!isTargetMode || compareMode === "single")
   );
+  const canSelectRoi = Boolean(isTargetMode && isRoiSelectionActive && selectedImage && compareMode === "single");
   const shouldDrawMaskOverlay = Boolean(isMaskEditingActive && isMaskVisible);
+  const visibleRoi = roiDraft ?? garmentRoi;
   const zoom = zoomLevels[zoomIndex];
   const previewTitle =
     mode === "reference"
@@ -107,6 +118,12 @@ export function CanvasWorkspace({
       setCompareMode("single");
     }
   }, [compareMode, isMaskEditingActive]);
+
+  useEffect(() => {
+    if (isRoiSelectionActive && compareMode !== "single") {
+      setCompareMode("single");
+    }
+  }, [compareMode, isRoiSelectionActive]);
 
   useEffect(() => {
     if (!canEditMask) {
@@ -369,10 +386,10 @@ export function CanvasWorkspace({
     setIsDraggingSplit(false);
   }
 
-  function getMaskPoint(event: PointerEvent<HTMLCanvasElement>) {
+  function getImagePoint(event: PointerEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current;
 
-    if (!canvas || !selectedImage || !isMaskEditingActive || (isTargetMode && compareMode !== "single")) {
+    if (!canvas || !selectedImage) {
       return null;
     }
 
@@ -398,12 +415,149 @@ export function CanvasWorkspace({
     }
 
     return {
-      brushSizeInImagePixels: Math.max(1, brushSize / layout.scale),
-      point: {
-        x: ((canvasX - layout.x) / layout.width) * selectedImage.width,
-        y: ((canvasY - layout.y) / layout.height) * selectedImage.height
-      }
+      x: ((canvasX - layout.x) / layout.width) * selectedImage.width,
+      y: ((canvasY - layout.y) / layout.height) * selectedImage.height
     };
+  }
+
+  function getMaskPoint(event: PointerEvent<HTMLCanvasElement>) {
+    const canvas = canvasRef.current;
+
+    if (!canvas || !selectedImage || !isMaskEditingActive || (isTargetMode && compareMode !== "single")) {
+      return null;
+    }
+
+    const imagePoint = getImagePoint(event);
+
+    if (!imagePoint) {
+      return null;
+    }
+
+    const baseLayout = getContainLayout(canvas.width, canvas.height, selectedImage.width, selectedImage.height);
+    const layout = {
+      scale: baseLayout.scale * zoom
+    };
+
+    return {
+      brushSizeInImagePixels: Math.max(1, brushSize / layout.scale),
+      point: imagePoint
+    };
+  }
+
+  function createRoiFromPoints(startPoint: MaskPoint, endPoint: MaskPoint) {
+    if (!selectedImage) {
+      return null;
+    }
+
+    const x = Math.max(0, Math.min(startPoint.x, endPoint.x));
+    const y = Math.max(0, Math.min(startPoint.y, endPoint.y));
+    const right = Math.min(selectedImage.width, Math.max(startPoint.x, endPoint.x));
+    const bottom = Math.min(selectedImage.height, Math.max(startPoint.y, endPoint.y));
+    const width = right - x;
+    const height = bottom - y;
+
+    if (width < 2 || height < 2) {
+      return null;
+    }
+
+    return {
+      height,
+      width,
+      x,
+      y
+    };
+  }
+
+  function getRoiOverlayStyle(roi: GarmentRoi) {
+    const canvas = canvasRef.current;
+    const canvasShell = canvas?.parentElement;
+
+    if (!canvas || !canvasShell || !selectedImage) {
+      return null;
+    }
+
+    const canvasRect = canvas.getBoundingClientRect();
+    const shellRect = canvasShell.getBoundingClientRect();
+    const baseLayout = getContainLayout(canvas.width, canvas.height, selectedImage.width, selectedImage.height);
+    const layout = {
+      x: (canvas.width - baseLayout.width * zoom) / 2,
+      y: (canvas.height - baseLayout.height * zoom) / 2,
+      scale: baseLayout.scale * zoom
+    };
+    const canvasScaleX = canvasRect.width / canvas.width;
+    const canvasScaleY = canvasRect.height / canvas.height;
+
+    return {
+      height: `${roi.height * layout.scale * canvasScaleY}px`,
+      left: `${canvasRect.left - shellRect.left + (layout.x + roi.x * layout.scale) * canvasScaleX}px`,
+      top: `${canvasRect.top - shellRect.top + (layout.y + roi.y * layout.scale) * canvasScaleY}px`,
+      width: `${roi.width * layout.scale * canvasScaleX}px`
+    };
+  }
+
+  function handleRoiPointerDown(event: PointerEvent<HTMLCanvasElement>) {
+    if (event.button !== 0 || !canSelectRoi) {
+      return false;
+    }
+
+    const startPoint = getImagePoint(event);
+
+    if (!startPoint) {
+      return false;
+    }
+
+    event.currentTarget.setPointerCapture(event.pointerId);
+    roiStartPointRef.current = startPoint;
+    setRoiDraft({
+      height: 1,
+      width: 1,
+      x: startPoint.x,
+      y: startPoint.y
+    });
+    setIsDrawingRoi(true);
+
+    return true;
+  }
+
+  function handleRoiPointerMove(event: PointerEvent<HTMLCanvasElement>) {
+    if (!isDrawingRoi || !roiStartPointRef.current) {
+      return false;
+    }
+
+    const currentPoint = getImagePoint(event);
+    const draftRoi = currentPoint ? createRoiFromPoints(roiStartPointRef.current, currentPoint) : null;
+
+    if (draftRoi) {
+      setRoiDraft(draftRoi);
+    }
+
+    return true;
+  }
+
+  function stopRoiSelection(event: PointerEvent<HTMLCanvasElement>) {
+    if (!isDrawingRoi) {
+      return false;
+    }
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    const currentPoint = getImagePoint(event);
+    const finalRoi =
+      currentPoint && roiStartPointRef.current
+        ? createRoiFromPoints(roiStartPointRef.current, currentPoint)
+        : roiDraft;
+
+    if (finalRoi && finalRoi.width >= 8 && finalRoi.height >= 8) {
+      onGarmentRoiChange(finalRoi);
+    }
+
+    roiStartPointRef.current = null;
+    setIsDrawingRoi(false);
+    setRoiDraft(null);
+
+    return true;
   }
 
   function updateBrushCursor(event: PointerEvent<HTMLCanvasElement>) {
@@ -427,6 +581,11 @@ export function CanvasWorkspace({
   }
 
   function handlePointerDown(event: PointerEvent<HTMLCanvasElement>) {
+    if (handleRoiPointerDown(event)) {
+      setBrushCursor(null);
+      return;
+    }
+
     if (
       event.button !== 0 ||
       !selectedImage ||
@@ -451,6 +610,11 @@ export function CanvasWorkspace({
   }
 
   function handlePointerMove(event: PointerEvent<HTMLCanvasElement>) {
+    if (handleRoiPointerMove(event)) {
+      setBrushCursor(null);
+      return;
+    }
+
     updateBrushCursor(event);
 
     if (!isDrawing || !selectedImage) {
@@ -470,6 +634,11 @@ export function CanvasWorkspace({
   }
 
   function stopDrawing(event: PointerEvent<HTMLCanvasElement>) {
+    if (stopRoiSelection(event)) {
+      setBrushCursor(null);
+      return;
+    }
+
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
@@ -481,6 +650,8 @@ export function CanvasWorkspace({
       setBrushCursor(null);
     }
   }
+
+  const roiOverlayStyle = visibleRoi ? getRoiOverlayStyle(visibleRoi) : null;
 
   return (
     <section className="flex min-h-[560px] min-w-0 flex-col rounded-lg border border-zinc-200 bg-white shadow-panel lg:min-h-[calc(100vh-220px)]">
@@ -547,7 +718,7 @@ export function CanvasWorkspace({
           <canvas
             aria-label={selectedImage ? `当前图片预览：${selectedImage.fileName}` : "当前图片预览"}
             className={`block aspect-[16/10] w-full rounded-md border border-zinc-300 bg-white ${
-              canEditMask ? "cursor-crosshair touch-none" : ""
+              canEditMask || canSelectRoi ? "cursor-crosshair touch-none" : ""
             }`}
             height={canvasHeight}
             onPointerCancel={stopDrawing}
@@ -558,6 +729,18 @@ export function CanvasWorkspace({
             ref={canvasRef}
             width={canvasWidth}
           />
+
+          {visibleRoi && roiOverlayStyle ? (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute rounded-sm border-2 border-amber-500 bg-amber-400/10 shadow-[0_0_0_1px_rgba(255,255,255,0.85)]"
+              style={roiOverlayStyle}
+            >
+              <span className="absolute left-1 top-1 rounded bg-amber-500 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                服装框选
+              </span>
+            </div>
+          ) : null}
 
           {brushCursor ? (
             <div

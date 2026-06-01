@@ -1,8 +1,11 @@
+import type { GarmentRoi } from "../types";
+
 export type AutoMaskOptions = {
   alphaThreshold?: number;
   backgroundDifferenceThreshold?: number;
   feather?: number;
   minAreaRatio?: number;
+  roi?: GarmentRoi | null;
 };
 
 export type AutoMaskResult = {
@@ -51,6 +54,43 @@ function getMaskArea(mask: ImageData) {
 
 function createEmptyMask(width: number, height: number) {
   return new ImageData(width, height);
+}
+
+function normalizeRoi(roi: GarmentRoi | null | undefined, width: number, height: number) {
+  if (!roi) {
+    return null;
+  }
+
+  const x = clamp(Math.floor(roi.x), 0, width - 1);
+  const y = clamp(Math.floor(roi.y), 0, height - 1);
+  const right = clamp(Math.ceil(roi.x + roi.width), x + 1, width);
+  const bottom = clamp(Math.ceil(roi.y + roi.height), y + 1, height);
+
+  return {
+    height: bottom - y,
+    width: right - x,
+    x,
+    y
+  };
+}
+
+function applyRoiToMask(mask: ImageData, roi: GarmentRoi | null) {
+  if (!roi) {
+    return mask;
+  }
+
+  const alphaValues = new Uint8ClampedArray(mask.width * mask.height);
+  const right = roi.x + roi.width;
+  const bottom = roi.y + roi.height;
+
+  for (let y = roi.y; y < bottom; y += 1) {
+    for (let x = roi.x; x < right; x += 1) {
+      const pixelIndex = y * mask.width + x;
+      alphaValues[pixelIndex] = mask.data[pixelIndex * 4 + 3];
+    }
+  }
+
+  return createMaskFromAlpha(mask.width, mask.height, alphaValues);
 }
 
 function getMaskCoverageRatio(mask: ImageData) {
@@ -539,12 +579,15 @@ export function generateAutoGarmentMask(
   const alphaThreshold = options.alphaThreshold ?? 12;
   const minAreaRatio = options.minAreaRatio ?? 0.01;
   const pixelCount = getPixelCount(imageData);
+  const roi = normalizeRoi(options.roi, imageData.width, imageData.height);
+  const analysisPixelCount = roi ? roi.width * roi.height : pixelCount;
   const hasTransparentEdges = hasTransparentBackground(imageData, alphaThreshold);
-  const initialMask = hasTransparentEdges
+  const initialMaskWithoutRoi = hasTransparentEdges
     ? createAlphaMaskFromTransparency(imageData, alphaThreshold)
     : createForegroundMaskByBackgroundDifference(imageData, options);
+  const initialMask = applyRoiToMask(initialMaskWithoutRoi, roi);
   const candidateArea = getMaskArea(initialMask);
-  const candidateCoverageRatio = candidateArea / pixelCount;
+  const candidateCoverageRatio = candidateArea / analysisPixelCount;
   const initialTouchesBorderRatio = getTouchesBorderRatio(initialMask);
   const borderPrunedResult =
     candidateCoverageRatio > 0.45 || initialTouchesBorderRatio > 0.16
@@ -553,7 +596,7 @@ export function generateAutoGarmentMask(
   const borderPrunedArea = borderPrunedResult ? getMaskArea(borderPrunedResult.mask) : 0;
   const shouldUseBorderPrunedMask = Boolean(
     borderPrunedResult &&
-      borderPrunedArea / pixelCount >= minAreaRatio &&
+      borderPrunedArea / analysisPixelCount >= minAreaRatio &&
       borderPrunedArea >= candidateArea * 0.06 &&
       borderPrunedArea < candidateArea
   );
@@ -562,15 +605,16 @@ export function generateAutoGarmentMask(
   const largestArea = getMaskArea(largestMask);
   const filledMask = fillMaskHoles(largestMask);
   const filledArea = getMaskArea(filledMask);
-  const softenedMask = softenMaskEdge(filledMask, options.feather ?? 2);
+  const softenedMask = applyRoiToMask(softenMaskEdge(filledMask, options.feather ?? 2), roi);
   const foregroundRatio = largestArea / pixelCount;
   const coverageRatio = filledArea / pixelCount;
+  const analysisCoverageRatio = filledArea / analysisPixelCount;
   const touchesBorderRatio = getTouchesBorderRatio(filledMask);
   const componentPurity = candidateArea > 0 ? largestArea / candidateArea : 0;
   const areaConfidence =
-    coverageRatio < minAreaRatio || coverageRatio > 0.65
+    analysisCoverageRatio < minAreaRatio || analysisCoverageRatio > 0.72
       ? 0.14
-      : coverageRatio < 0.035 || coverageRatio > 0.52
+      : analysisCoverageRatio < 0.035 || analysisCoverageRatio > 0.58
         ? 0.42
         : 0.84;
   const borderConfidence =
