@@ -39,6 +39,26 @@ export function imageDataToPngBase64(imageData: ImageData) {
   return stripDataUrlPrefix(canvas.toDataURL("image/png"));
 }
 
+export function imageDataToPngBlob(imageData: ImageData) {
+  const canvas = document.createElement("canvas");
+  const context = getCanvasContext(canvas);
+
+  canvas.width = imageData.width;
+  canvas.height = imageData.height;
+  context.putImageData(imageData, 0, 0);
+
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error("无法编码远程 AI 请求图片"));
+        return;
+      }
+
+      resolve(blob);
+    }, "image/png");
+  });
+}
+
 function createAlphaMaskFromBytes(bytes: Uint8Array, width: number, height: number) {
   const pixelCount = width * height;
   const mask = new ImageData(width, height);

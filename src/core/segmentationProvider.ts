@@ -1,5 +1,5 @@
 import { generateAutoGarmentMask, type AutoMaskOptions, type AutoMaskResult } from "./autoMask";
-import { imageDataToPngBase64, maskBase64ToImageData } from "./imageCodec";
+import { imageDataToPngBlob, maskBase64ToImageData } from "./imageCodec";
 import type { GarmentRoi, MaskPoint, SegmentationProviderType } from "../types";
 
 export type SegmentationInput = {
@@ -71,19 +71,28 @@ function getMaskStats(mask: ImageData) {
   };
 }
 
-function createRemoteRequestBody(input: SegmentationInput) {
-  const promptBox = input.promptBox ?? input.roi ?? null;
+function appendJsonField(formData: FormData, name: string, value: unknown) {
+  if (value === null || value === undefined) {
+    return;
+  }
 
-  return {
-    image: imageDataToPngBase64(input.imageData),
-    imageHeight: input.imageData.height,
-    imageMimeType: "image/png",
-    imageWidth: input.imageData.width,
-    mode: input.mode ?? "garment",
-    promptBox,
-    promptPoints: input.promptPoints ?? [],
-    roi: input.roi ?? null
-  };
+  formData.append(name, JSON.stringify(value));
+}
+
+async function createRemoteRequestBody(input: SegmentationInput) {
+  const promptBox = input.promptBox ?? input.roi ?? null;
+  const formData = new FormData();
+  const imageBlob = await imageDataToPngBlob(input.imageData);
+
+  formData.append("image", imageBlob, "garment.png");
+  formData.append("imageHeight", String(input.imageData.height));
+  formData.append("imageWidth", String(input.imageData.width));
+  formData.append("mode", input.mode ?? "garment");
+  appendJsonField(formData, "promptBox", promptBox);
+  appendJsonField(formData, "promptPoints", input.promptPoints ?? []);
+  appendJsonField(formData, "roi", input.roi ?? null);
+
+  return formData;
 }
 
 async function fetchRemoteAiMask(
@@ -95,10 +104,7 @@ async function fetchRemoteAiMask(
 
   try {
     const response = await fetch(endpoint, {
-      body: JSON.stringify(createRemoteRequestBody(input)),
-      headers: {
-        "Content-Type": "application/json"
-      },
+      body: await createRemoteRequestBody(input),
       method: "POST",
       signal: controller.signal
     });
