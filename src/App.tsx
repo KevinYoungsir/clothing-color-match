@@ -21,6 +21,7 @@ import {
   undoMask
 } from "./core/maskUtils";
 import { transferLabColor } from "./core/colorTransfer";
+import { calculateColorDifference } from "./core/colorDifference";
 import {
   applyImageAdjustments,
   defaultAdjustmentParams,
@@ -38,6 +39,7 @@ import {
 } from "./core/batchProcessor";
 import { generateAutoGarmentMask, type AutoMaskResult } from "./core/autoMask";
 import type {
+  ColorDifferenceResult,
   ColorCorrectionScope,
   GarmentRoi,
   MaskEditMode,
@@ -86,6 +88,7 @@ export default function App() {
   const [maskFeather, setMaskFeather] = useState(4);
   const [processedImages, setProcessedImages] = useState<Record<string, ImageData>>({});
   const [adjustedImages, setAdjustedImages] = useState<Record<string, ImageData>>({});
+  const [colorDifferenceResults, setColorDifferenceResults] = useState<Record<string, ColorDifferenceResult>>({});
   const [adjustmentParams, setAdjustmentParams] = useState<AdjustmentParams>(defaultAdjustmentParams);
   const [colorTransferError, setColorTransferError] = useState<string | null>(null);
   const [autoMaskNotice, setAutoMaskNotice] = useState<string | null>(null);
@@ -123,6 +126,8 @@ export default function App() {
   const selectedAdjustedImageData =
     maskEditMode === "target" && selectedSampleId ? adjustedImages[selectedSampleId] ?? null : null;
   const selectedPreviewImageData = selectedAdjustedImageData ?? selectedProcessedImageData;
+  const selectedColorDifferenceResult =
+    selectedSampleId && selectedPreviewImageData ? colorDifferenceResults[selectedSampleId] ?? null : null;
   const canUndoMask = (activeMaskState?.undoStack.length ?? 0) > 0;
   const canRedoMask = (activeMaskState?.redoStack.length ?? 0) > 0;
   const canApplyColorTransfer = Boolean(referenceImage && selectedSample);
@@ -218,6 +223,87 @@ export default function App() {
   ]);
 
   useEffect(() => {
+    if (!selectedSampleId || !selectedSample || !referenceImage || !selectedPreviewImageData) {
+      if (selectedSampleId) {
+        setColorDifferenceResults((currentResults) => {
+          const { [selectedSampleId]: _removedResult, ...remainingResults } = currentResults;
+          return remainingResults;
+        });
+      }
+
+      return;
+    }
+
+    const targetMask =
+      colorCorrectionScope === "full-image"
+        ? null
+        : selectedMaskState && hasMaskPixels(selectedMaskState.imageData)
+          ? selectedMaskState.imageData
+          : null;
+    const referenceMask =
+      referenceMaskState && hasMaskPixels(referenceMaskState.imageData)
+        ? referenceMaskState.imageData
+        : null;
+
+    if (colorCorrectionScope !== "full-image" && (!targetMask || !referenceMask)) {
+      setColorDifferenceResults((currentResults) => {
+        const { [selectedSampleId]: _removedResult, ...remainingResults } = currentResults;
+        return remainingResults;
+      });
+      return;
+    }
+
+    let isCancelled = false;
+
+    Promise.all([
+      loadImageDataFromUrl(referenceImage.url, referenceImage.width, referenceImage.height),
+      loadImageDataFromUrl(selectedSample.url, selectedSample.width, selectedSample.height)
+    ])
+      .then(([referenceImageData, targetBeforeImageData]) => {
+        if (isCancelled) {
+          return;
+        }
+
+        const colorDifference = calculateColorDifference({
+          fullImageMode: colorCorrectionScope === "full-image",
+          referenceImageData,
+          referenceMask,
+          targetAfterImageData: selectedPreviewImageData,
+          targetBeforeImageData,
+          targetMask
+        });
+
+        setColorDifferenceResults((currentResults) => ({
+          ...currentResults,
+          [selectedSampleId]: colorDifference
+        }));
+      })
+      .catch((error) => {
+        if (isCancelled) {
+          return;
+        }
+
+        console.warn("Color difference calculation failed", error);
+        setColorDifferenceResults((currentResults) => {
+          const { [selectedSampleId]: _removedResult, ...remainingResults } = currentResults;
+          return remainingResults;
+        });
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [
+    colorCorrectionScope,
+    referenceImage,
+    referenceMaskState,
+    selectedMaskState,
+    selectedPreviewImageData,
+    selectedSample,
+    selectedSampleId
+  ]);
+
+  useEffect(() => {
     referenceImageRef.current = referenceImage;
   }, [referenceImage]);
 
@@ -265,6 +351,7 @@ export default function App() {
       setIsMaskVisible(false);
       setProcessedImages({});
       setAdjustedImages({});
+      setColorDifferenceResults({});
       setSampleProcessStatuses({});
       setSampleProcessMessages({});
       setUploadError(null);
@@ -682,6 +769,10 @@ export default function App() {
       const { [imageId]: _removedImage, ...remainingImages } = currentImages;
       return remainingImages;
     });
+    setColorDifferenceResults((currentResults) => {
+      const { [imageId]: _removedResult, ...remainingResults } = currentResults;
+      return remainingResults;
+    });
     setSampleProcessStatuses((currentStatuses) => ({
       ...currentStatuses,
       [imageId]: selectedSampleIdSet.has(imageId) ? "selected" : "idle"
@@ -811,6 +902,7 @@ export default function App() {
     setAdjustmentError(null);
     setProcessedImages({});
     setAdjustedImages({});
+    setColorDifferenceResults({});
     setSampleProcessStatuses({});
     setSampleProcessMessages({});
     setBatchStatuses({});
@@ -1506,6 +1598,7 @@ export default function App() {
             canRedoMask={canRedoMask}
             canUndoMask={canUndoMask}
             colorCorrectionScope={colorCorrectionScope}
+            colorDifferenceResult={selectedColorDifferenceResult}
             colorStrength={colorStrength}
             colorTransferError={colorTransferError}
             autoMaskNotice={autoMaskNotice}

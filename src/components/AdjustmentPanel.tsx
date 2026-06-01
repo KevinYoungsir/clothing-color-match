@@ -1,5 +1,11 @@
 import type { AdjustmentKey, AdjustmentParams } from "../core/adjustment";
-import type { ColorCorrectionScope, MaskEditMode, MaskRecognitionStatus, MaskTool } from "../types";
+import type {
+  ColorCorrectionScope,
+  ColorDifferenceResult,
+  MaskEditMode,
+  MaskRecognitionStatus,
+  MaskTool
+} from "../types";
 
 type AdjustmentPanelProps = {
   adjustmentError: string | null;
@@ -12,6 +18,7 @@ type AdjustmentPanelProps = {
   canRedoMask: boolean;
   canUndoMask: boolean;
   colorCorrectionScope: ColorCorrectionScope;
+  colorDifferenceResult: ColorDifferenceResult | null;
   colorStrength: number;
   colorTransferError: string | null;
   hasColorResult: boolean;
@@ -101,6 +108,36 @@ const colorCorrectionScopeOptions: Array<{
   }
 ];
 
+const colorDifferenceLabels: Record<ColorDifferenceResult["assessment"], {
+  className: string;
+  text: string;
+}> = {
+  acceptable: {
+    className: "border-amber-200 bg-amber-50 text-amber-800",
+    text: "可接受"
+  },
+  "very-close": {
+    className: "border-emerald-200 bg-emerald-50 text-emerald-800",
+    text: "非常接近"
+  },
+  "visible-difference": {
+    className: "border-rose-200 bg-rose-50 text-rose-700",
+    text: "仍有明显偏差，建议修正蒙版或切换更强校色模式"
+  }
+};
+
+function formatDeltaE(value: number) {
+  return Number.isFinite(value) ? value.toFixed(2) : "--";
+}
+
+function formatImprovement(value: number) {
+  if (!Number.isFinite(value)) {
+    return "--";
+  }
+
+  return `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`;
+}
+
 export function AdjustmentPanel({
   adjustmentError,
   adjustmentParams,
@@ -112,6 +149,7 @@ export function AdjustmentPanel({
   canRedoMask,
   canUndoMask,
   colorCorrectionScope,
+  colorDifferenceResult,
   colorStrength,
   colorTransferError,
   hasColorResult,
@@ -155,6 +193,9 @@ export function AdjustmentPanel({
   const isFullImageScope = colorCorrectionScope === "full-image";
   const isManualMaskScope = colorCorrectionScope === "manual-mask";
   const canUseMaskControls = Boolean(hasEditableImage && !(isFullImageScope && maskEditMode === "target"));
+  const colorDifferenceLabel = colorDifferenceResult
+    ? colorDifferenceLabels[colorDifferenceResult.assessment]
+    : null;
   const applyButtonText = isColorTransferRunning
     ? "处理中..."
     : isBatchColoring
@@ -369,6 +410,53 @@ export function AdjustmentPanel({
               {batchColorMessage}
             </p>
           ) : null}
+
+          <div className="mt-3 rounded-md border border-zinc-200 bg-white px-3 py-3">
+            <div className="flex items-center justify-between gap-3">
+              <h4 className="text-xs font-semibold text-zinc-700">ΔE 色差检测</h4>
+              {colorDifferenceLabel ? (
+                <span
+                  className={`max-w-[13rem] rounded border px-2 py-1 text-right text-[11px] font-semibold leading-4 ${colorDifferenceLabel.className}`}
+                >
+                  {colorDifferenceLabel.text}
+                </span>
+              ) : null}
+            </div>
+
+            {colorDifferenceResult ? (
+              <>
+                <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-md bg-zinc-50 px-2 py-2">
+                    <p className="text-[11px] font-medium text-zinc-500">校色前</p>
+                    <p className="mt-1 text-sm font-semibold text-zinc-800">
+                      {formatDeltaE(colorDifferenceResult.deltaEBefore)}
+                    </p>
+                  </div>
+                  <div className="rounded-md bg-zinc-50 px-2 py-2">
+                    <p className="text-[11px] font-medium text-zinc-500">校色后</p>
+                    <p className="mt-1 text-sm font-semibold text-zinc-800">
+                      {formatDeltaE(colorDifferenceResult.deltaEAfter)}
+                    </p>
+                  </div>
+                  <div className="rounded-md bg-zinc-50 px-2 py-2">
+                    <p className="text-[11px] font-medium text-zinc-500">改善</p>
+                    <p
+                      className={`mt-1 text-sm font-semibold ${
+                        colorDifferenceResult.improvementPercent >= 0 ? "text-emerald-700" : "text-rose-700"
+                      }`}
+                    >
+                      {formatImprovement(colorDifferenceResult.improvementPercent)}
+                    </p>
+                  </div>
+                </div>
+                {colorDifferenceResult.warning ? (
+                  <p className="mt-2 text-xs leading-5 text-amber-700">{colorDifferenceResult.warning}</p>
+                ) : null}
+              </>
+            ) : (
+              <p className="mt-2 text-xs text-zinc-500">暂无色差结果</p>
+            )}
+          </div>
 
           <p className="mt-3 rounded-md bg-zinc-50 px-3 py-2 text-xs leading-5 text-zinc-500">
             {isFullImageScope

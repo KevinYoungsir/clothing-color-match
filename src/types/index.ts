@@ -22,6 +22,19 @@ export type GarmentRoi = {
   height: number;
 };
 
+export type ColorDifferenceAssessment = "very-close" | "acceptable" | "visible-difference";
+
+export type ColorDifferenceResult = {
+  deltaEBefore: number;
+  deltaEAfter: number;
+  improvementPercent: number;
+  assessment: ColorDifferenceAssessment;
+  referencePixelCount: number;
+  targetPixelCount: number;
+  isFullImageScope: boolean;
+  warning?: string;
+};
+
 export type SampleProcessStatus =
   | "idle"
   | "selected"
