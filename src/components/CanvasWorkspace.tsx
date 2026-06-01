@@ -46,6 +46,8 @@ export function CanvasWorkspace({
   const imageUrlRef = useRef<string | null>(null);
   const previousPointRef = useRef<MaskPoint | null>(null);
   const roiStartPointRef = useRef<MaskPoint | null>(null);
+  const previousCompareModeBeforeRoiRef = useRef<CompareMode | null>(null);
+  const wasRoiSelectionActiveRef = useRef(false);
   const [compareMode, setCompareMode] = useState<CompareMode>("single");
   const [isDrawing, setIsDrawing] = useState(false);
   const [isDrawingRoi, setIsDrawingRoi] = useState(false);
@@ -120,10 +122,33 @@ export function CanvasWorkspace({
   }, [compareMode, isMaskEditingActive]);
 
   useEffect(() => {
-    if (isRoiSelectionActive && compareMode !== "single") {
-      setCompareMode("single");
+    const wasRoiSelectionActive = wasRoiSelectionActiveRef.current;
+
+    if (isRoiSelectionActive && !wasRoiSelectionActive) {
+      previousCompareModeBeforeRoiRef.current = compareMode;
+
+      if (compareMode !== "single") {
+        setCompareMode("single");
+      }
     }
-  }, [compareMode, isRoiSelectionActive]);
+
+    if (!isRoiSelectionActive && wasRoiSelectionActive) {
+      const previousCompareMode = previousCompareModeBeforeRoiRef.current;
+
+      previousCompareModeBeforeRoiRef.current = null;
+
+      if (
+        previousCompareMode &&
+        previousCompareMode !== "single" &&
+        canCompare &&
+        !isMaskEditingActive
+      ) {
+        setCompareMode(previousCompareMode);
+      }
+    }
+
+    wasRoiSelectionActiveRef.current = isRoiSelectionActive;
+  }, [canCompare, compareMode, isMaskEditingActive, isRoiSelectionActive]);
 
   useEffect(() => {
     if (!canEditMask) {

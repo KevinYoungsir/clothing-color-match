@@ -835,7 +835,6 @@ export default function App() {
       ...currentRois,
       [selectedSample.id]: roi
     }));
-    clearSampleResult(selectedSample.id);
     setSampleMaskStatuses((currentStatuses) =>
       currentStatuses[selectedSample.id] === "manual"
         ? currentStatuses
@@ -858,7 +857,6 @@ export default function App() {
       const { [selectedSampleId]: _removedRoi, ...remainingRois } = currentRois;
       return remainingRois;
     });
-    clearSampleResult(selectedSampleId);
     setIsRoiSelectionActive(false);
     setAutoMaskNotice("已清除当前样品图的服装框选区域。");
   }
