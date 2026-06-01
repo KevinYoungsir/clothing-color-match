@@ -16,7 +16,20 @@ The default segmenter is `mock`. You can select it explicitly:
 $env:AI_SEGMENTER="mock"
 ```
 
-Future implementations can add new segmenters such as `lightweight` or `sam2` without changing the frontend `/segment-garment` contract.
+The `lightweight` segmenter is registered as a placeholder for a future small garment segmentation model. It does not run real inference yet:
+
+```powershell
+$env:AI_SEGMENTER="lightweight"
+$env:AI_LIGHTWEIGHT_MODEL_PATH="path\to\model.onnx"
+```
+
+If `AI_LIGHTWEIGHT_MODEL_PATH` is missing or points to a missing file, `/segment-garment` returns `success: false` with a clear message. It does not fall back to a full-image mask or generate a fake garment mask.
+
+Future implementations can add real `lightweight` or `sam2` inference without changing the frontend `/segment-garment` contract.
+
+## Future Real Model Dependencies
+
+Do not install heavyweight inference dependencies for the mock server. A future real lightweight segmenter may add dependencies such as `onnxruntime`, and a SAM/SAM2 segmenter may add PyTorch-related packages. Those should be introduced only with the real model integration task, and model files must not be committed to the repo.
 
 ## Setup
 

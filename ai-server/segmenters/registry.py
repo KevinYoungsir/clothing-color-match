@@ -1,8 +1,10 @@
 from .base import BaseSegmenter
+from .lightweight_segmenter import LightweightSegmenter
 from .mock_segmenter import MockSegmenter
 
 
 segmenters = {
+    LightweightSegmenter.name: LightweightSegmenter,
     MockSegmenter.name: MockSegmenter,
 }
 
