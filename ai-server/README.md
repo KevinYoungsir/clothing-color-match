@@ -27,6 +27,16 @@ If `AI_LIGHTWEIGHT_MODEL_PATH` is missing or points to a missing file, `/segment
 
 Future implementations can add real `lightweight` or `sam2` inference without changing the frontend `/segment-garment` contract.
 
+## Mask Postprocessing
+
+`segmenters/postprocess.py` contains shared mask postprocessing helpers.
+
+- If `roi` or `promptBox` is provided, every pixel outside that rectangle is forced to black.
+- If a model returns a mask with a different size from the input image, the mask is resized safely with nearest-neighbor sampling.
+- If no `roi` or `promptBox` is provided, postprocessing does not create a new full-image mask.
+
+This keeps future lightweight or SAM/SAM2 segmenters from accidentally returning a whole-image garment mask when the user has provided a tighter garment region.
+
 ## Future Real Model Dependencies
 
 Do not install heavyweight inference dependencies for the mock server. A future real lightweight segmenter may add dependencies such as `onnxruntime`, and a SAM/SAM2 segmenter may add PyTorch-related packages. Those should be introduced only with the real model integration task, and model files must not be committed to the repo.
