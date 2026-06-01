@@ -39,6 +39,7 @@ type AdjustmentPanelProps = {
   referenceMaskStatus: MaskRecognitionStatus;
   selectedSampleMaskStatus: MaskRecognitionStatus;
   segmentationProviderType: SegmentationProviderType;
+  smartColorOptimizationEnabled: boolean;
   onBrushSizeChange: (value: number) => void;
   onClearGarmentRoi: () => void;
   onColorCorrectionScopeChange: (scope: ColorCorrectionScope) => void;
@@ -59,6 +60,7 @@ type AdjustmentPanelProps = {
   onResetAllAdjustments: () => void;
   onSegmentationProviderTypeChange: (providerType: SegmentationProviderType) => void;
   onShadowProtectionChange: (value: number) => void;
+  onSmartColorOptimizationChange: (isEnabled: boolean) => void;
   onStartGarmentRoiSelection: () => void;
   onToggleMaskVisible: (isVisible: boolean) => void;
   onUndoMask: () => void;
@@ -213,6 +215,7 @@ export function AdjustmentPanel({
   referenceMaskStatus,
   selectedSampleMaskStatus,
   segmentationProviderType,
+  smartColorOptimizationEnabled,
   onBrushSizeChange,
   onClearGarmentRoi,
   onColorCorrectionScopeChange,
@@ -233,6 +236,7 @@ export function AdjustmentPanel({
   onResetAllAdjustments,
   onSegmentationProviderTypeChange,
   onShadowProtectionChange,
+  onSmartColorOptimizationChange,
   onStartGarmentRoiSelection,
   onToggleMaskVisible,
   onUndoMask,
@@ -365,6 +369,22 @@ export function AdjustmentPanel({
               type="range"
               value={colorStrength}
             />
+          </label>
+
+          <label className="mt-4 flex items-start gap-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-3">
+            <input
+              checked={smartColorOptimizationEnabled}
+              className="mt-1 accent-teal-600"
+              disabled={isBatchColoring || isColorTransferRunning}
+              onChange={(event) => onSmartColorOptimizationChange(event.currentTarget.checked)}
+              type="checkbox"
+            />
+            <span>
+              <span className="block text-sm font-semibold text-zinc-800">智能校色优化</span>
+              <span className="mt-1 block text-xs leading-5 text-zinc-500">
+                在基础 Lab 校色后自动微调目标区域颜色，进一步降低 ΔE，同时尽量保留明暗和纹理。
+              </span>
+            </span>
           </label>
 
           <label className="mt-4 block">

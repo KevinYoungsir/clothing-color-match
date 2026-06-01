@@ -5,6 +5,7 @@ import {
 } from "./adjustment";
 import { runGarmentSegmentation, type SegmentationResult } from "./segmentationProvider";
 import { transferLabColor } from "./colorTransfer";
+import { optimizeSmartColorMatch } from "./smartColorMatch";
 import { loadImageDataFromUrl } from "./imageLoader";
 import { hasMaskPixels } from "./maskUtils";
 import type {
@@ -25,6 +26,7 @@ export type AutoColorParams = {
   highlightProtection: number;
   maskFeather: number;
   segmentationProviderType: SegmentationProviderType;
+  smartColorOptimizationEnabled: boolean;
 };
 
 export type BatchImageStatus = Exclude<SampleProcessStatus, "idle" | "selected" | "recognition-failed">;
@@ -139,20 +141,31 @@ export async function processSampleImage({
     targetImageData: originalImageData,
     targetMask: isFullImageScope ? null : targetMask
   });
+  const colorTransferredImageData = autoParams.smartColorOptimizationEnabled
+    ? optimizeSmartColorMatch({
+        ...autoParams,
+        baseImageData: transferResult.imageData,
+        fullImageMode: isFullImageScope,
+        referenceImageData,
+        referenceMask: hasUsableMask(referenceMask) ? referenceMask : null,
+        sourceImageData: originalImageData,
+        targetMask: isFullImageScope ? null : targetMask
+      }).imageData
+    : transferResult.imageData;
   const adjustmentMask = isFullImageScope
     ? createFullImageMask(originalImageData.width, originalImageData.height)
     : targetMask!;
   const finalImageData = isDefaultAdjustmentParams(adjustmentParams)
-    ? transferResult.imageData
+    ? colorTransferredImageData
     : applyImageAdjustments({
-        baseImageData: transferResult.imageData,
+        baseImageData: colorTransferredImageData,
         originalImageData,
         params: adjustmentParams,
         targetMask: adjustmentMask
       });
 
   return {
-    colorTransferredImageData: transferResult.imageData,
+    colorTransferredImageData,
     finalImageData,
     image: sampleImage,
     originalImageData
@@ -177,20 +190,31 @@ function processLoadedSampleImage(
     targetImageData: originalImageData,
     targetMask: isFullImageScope ? null : targetMask
   });
+  const colorTransferredImageData = autoParams.smartColorOptimizationEnabled
+    ? optimizeSmartColorMatch({
+        ...autoParams,
+        baseImageData: transferResult.imageData,
+        fullImageMode: isFullImageScope,
+        referenceImageData,
+        referenceMask: hasUsableMask(referenceMask) ? referenceMask : null,
+        sourceImageData: originalImageData,
+        targetMask: isFullImageScope ? null : targetMask
+      }).imageData
+    : transferResult.imageData;
   const adjustmentMask = isFullImageScope
     ? createFullImageMask(originalImageData.width, originalImageData.height)
     : targetMask!;
   const finalImageData = isDefaultAdjustmentParams(adjustmentParams)
-    ? transferResult.imageData
+    ? colorTransferredImageData
     : applyImageAdjustments({
-        baseImageData: transferResult.imageData,
+        baseImageData: colorTransferredImageData,
         originalImageData,
         params: adjustmentParams,
         targetMask: adjustmentMask
       });
 
   return {
-    colorTransferredImageData: transferResult.imageData,
+    colorTransferredImageData,
     finalImageData,
     image: sampleImage,
     originalImageData

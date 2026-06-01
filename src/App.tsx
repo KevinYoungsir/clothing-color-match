@@ -22,6 +22,7 @@ import {
 } from "./core/maskUtils";
 import { transferLabColor } from "./core/colorTransfer";
 import { calculateColorDifference } from "./core/colorDifference";
+import { optimizeSmartColorMatch } from "./core/smartColorMatch";
 import {
   applyImageAdjustments,
   defaultAdjustmentParams,
@@ -118,6 +119,7 @@ export default function App() {
   const [highlightProtection, setHighlightProtection] = useState(colorMatchModePresets.accurate.highlightProtection);
   const [lightnessBlend, setLightnessBlend] = useState(colorMatchModePresets.accurate.lightnessBlend);
   const [maskFeather, setMaskFeather] = useState(4);
+  const [smartColorOptimizationEnabled, setSmartColorOptimizationEnabled] = useState(false);
   const [processedImages, setProcessedImages] = useState<Record<string, ImageData>>({});
   const [adjustedImages, setAdjustedImages] = useState<Record<string, ImageData>>({});
   const [colorDifferenceResults, setColorDifferenceResults] = useState<Record<string, ColorDifferenceResult>>({});
@@ -171,6 +173,7 @@ export default function App() {
       lightnessBlend,
       maskFeather,
       segmentationProviderType,
+      smartColorOptimizationEnabled,
       shadowProtection
     }),
     [
@@ -180,6 +183,7 @@ export default function App() {
       lightnessBlend,
       maskFeather,
       segmentationProviderType,
+      smartColorOptimizationEnabled,
       shadowProtection
     ]
   );
@@ -969,6 +973,17 @@ export default function App() {
     );
   }
 
+  function handleSmartColorOptimizationChange(isEnabled: boolean) {
+    setSmartColorOptimizationEnabled(isEnabled);
+    setColorTransferError(null);
+    setAdjustmentError(null);
+    setAutoMaskNotice(
+      isEnabled
+        ? "已开启智能校色优化，点击重新校色后会在 Lab 校色基础上进一步降低色差。"
+        : "已关闭智能校色优化，点击重新校色后使用基础 Lab 校色结果。"
+    );
+  }
+
   function handleColorCorrectionScopeChange(scope: ColorCorrectionScope) {
     setColorCorrectionScope(scope);
     setColorTransferError(null);
@@ -1622,10 +1637,25 @@ export default function App() {
         targetImageData,
         targetMask
       });
+      const colorTransferredImageData = smartColorOptimizationEnabled
+        ? optimizeSmartColorMatch({
+            baseImageData: result.imageData,
+            colorStrength,
+            fullImageMode: colorCorrectionScope === "full-image",
+            highlightProtection,
+            lightnessBlend,
+            maskFeather,
+            referenceImageData,
+            referenceMask,
+            shadowProtection,
+            sourceImageData: targetImageData,
+            targetMask
+          }).imageData
+        : result.imageData;
 
       setProcessedImages((currentImages) => ({
         ...currentImages,
-        [selectedSample.id]: result.imageData
+        [selectedSample.id]: colorTransferredImageData
       }));
       setSampleMaskStatuses((currentStatuses) => ({
         ...currentStatuses,
@@ -1728,6 +1758,7 @@ export default function App() {
             referenceMaskStatus={referenceMaskStatus}
             selectedSampleMaskStatus={selectedSampleMaskStatus}
             segmentationProviderType={segmentationProviderType}
+            smartColorOptimizationEnabled={smartColorOptimizationEnabled}
             onBrushSizeChange={setBrushSize}
             onColorCorrectionScopeChange={handleColorCorrectionScopeChange}
             onColorStrengthChange={setColorStrength}
@@ -1748,6 +1779,7 @@ export default function App() {
             onResetAllAdjustments={handleResetAllAdjustments}
             onSegmentationProviderTypeChange={handleSegmentationProviderTypeChange}
             onShadowProtectionChange={setShadowProtection}
+            onSmartColorOptimizationChange={handleSmartColorOptimizationChange}
             onStartGarmentRoiSelection={handleStartGarmentRoiSelection}
             onToggleMaskVisible={handleToggleMaskVisible}
             onUndoMask={handleUndoMask}
