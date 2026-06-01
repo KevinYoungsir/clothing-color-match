@@ -3,7 +3,7 @@ import {
   isDefaultAdjustmentParams,
   type AdjustmentParams
 } from "./adjustment";
-import { generateAutoGarmentMask, type AutoMaskResult } from "./autoMask";
+import { runGarmentSegmentation, type SegmentationResult } from "./segmentationProvider";
 import { transferLabColor } from "./colorTransfer";
 import { loadImageDataFromUrl } from "./imageLoader";
 import { hasMaskPixels } from "./maskUtils";
@@ -13,6 +13,7 @@ import type {
   MaskRecognitionStatus,
   MaskState,
   SampleProcessStatus,
+  SegmentationProviderType,
   UploadedImage
 } from "../types";
 
@@ -23,6 +24,7 @@ export type AutoColorParams = {
   shadowProtection: number;
   highlightProtection: number;
   maskFeather: number;
+  segmentationProviderType: SegmentationProviderType;
 };
 
 export type BatchImageStatus = Exclude<SampleProcessStatus, "idle" | "selected" | "recognition-failed">;
@@ -66,7 +68,7 @@ type ProcessBatchImagesOptions = {
   autoMaskFeather?: number;
   garmentRois?: Record<string, GarmentRoi>;
   minAutoMaskConfidence?: number;
-  onAutoMaskGenerated?: (image: UploadedImage, result: AutoMaskResult) => void;
+  onAutoMaskGenerated?: (image: UploadedImage, result: SegmentationResult) => void;
 };
 
 function createStatus(
@@ -96,7 +98,7 @@ function hasUsableMask(mask: ImageData | null | undefined) {
   return Boolean(mask && hasMaskPixels(mask));
 }
 
-function isAutoMaskResultUsable(result: AutoMaskResult, minConfidence: number) {
+function isAutoMaskResultUsable(result: SegmentationResult, minConfidence: number) {
   const hasUnsafeCoverage = result.coverageRatio > 0.65;
   const hasUnsafeBorderTouch =
     result.touchesBorderRatio > 0.26 ||
@@ -235,10 +237,17 @@ export async function processBatchImages({
           continue;
         }
       } else if (!shouldUseCurrentMask) {
-        const autoMaskResult = generateAutoGarmentMask(originalImageData, {
-          feather: autoMaskFeather,
-          roi: garmentRoi
-        });
+        const autoMaskResult = await runGarmentSegmentation(
+          {
+            imageData: originalImageData,
+            mode: "garment",
+            options: {
+              feather: autoMaskFeather
+            },
+            roi: garmentRoi
+          },
+          autoParams.segmentationProviderType
+        );
 
         if (!isAutoMaskResultUsable(autoMaskResult, minAutoMaskConfidence)) {
           const status = createStatus(sample, "needs-manual-fix", "需手动修正");

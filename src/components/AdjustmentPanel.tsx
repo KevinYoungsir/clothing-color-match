@@ -5,7 +5,8 @@ import type {
   ColorMatchMode,
   MaskEditMode,
   MaskRecognitionStatus,
-  MaskTool
+  MaskTool,
+  SegmentationProviderType
 } from "../types";
 
 type AdjustmentPanelProps = {
@@ -37,6 +38,7 @@ type AdjustmentPanelProps = {
   maskTool: MaskTool;
   referenceMaskStatus: MaskRecognitionStatus;
   selectedSampleMaskStatus: MaskRecognitionStatus;
+  segmentationProviderType: SegmentationProviderType;
   onBrushSizeChange: (value: number) => void;
   onClearGarmentRoi: () => void;
   onColorCorrectionScopeChange: (scope: ColorCorrectionScope) => void;
@@ -55,6 +57,7 @@ type AdjustmentPanelProps = {
   onRegenerateAutoMask: () => void;
   onResetAdjustmentParam: (key: AdjustmentKey) => void;
   onResetAllAdjustments: () => void;
+  onSegmentationProviderTypeChange: (providerType: SegmentationProviderType) => void;
   onShadowProtectionChange: (value: number) => void;
   onStartGarmentRoiSelection: () => void;
   onToggleMaskVisible: (isVisible: boolean) => void;
@@ -133,6 +136,23 @@ const colorMatchModeOptions: Array<{
   }
 ];
 
+const segmentationProviderOptions: Array<{
+  description: string;
+  label: string;
+  value: SegmentationProviderType;
+}> = [
+  {
+    description: "使用当前前端白底、浅灰底和透明底识别算法，支持框选区域。",
+    label: "传统识别",
+    value: "traditional"
+  },
+  {
+    description: "预留 AI 分割接口；暂未接入模型，识别时会自动回退到传统识别。",
+    label: "AI识别，实验性",
+    value: "ai-placeholder"
+  }
+];
+
 const colorDifferenceLabels: Record<ColorDifferenceResult["assessment"], {
   className: string;
   text: string;
@@ -192,6 +212,7 @@ export function AdjustmentPanel({
   maskTool,
   referenceMaskStatus,
   selectedSampleMaskStatus,
+  segmentationProviderType,
   onBrushSizeChange,
   onClearGarmentRoi,
   onColorCorrectionScopeChange,
@@ -210,6 +231,7 @@ export function AdjustmentPanel({
   onRegenerateAutoMask,
   onResetAdjustmentParam,
   onResetAllAdjustments,
+  onSegmentationProviderTypeChange,
   onShadowProtectionChange,
   onStartGarmentRoiSelection,
   onToggleMaskVisible,
@@ -256,6 +278,34 @@ export function AdjustmentPanel({
                 ? "手动蒙版模式只校色你绘制的样品蒙版区域，适合精修复杂背景图片。"
                 : "上传标准图和样品图后可直接自动识别并校色。自动识别适合白底图、透明底图、服装主体清晰的图片；如果识别不准确，可用画笔和橡皮擦修正。"}
           </p>
+
+          <div className="mt-3">
+            <p className="text-xs font-medium text-zinc-500">识别方式</p>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              {segmentationProviderOptions.map((option) => (
+                <button
+                  className={`rounded-md border px-3 py-2 text-left transition ${
+                    segmentationProviderType === option.value
+                      ? "border-teal-500 bg-teal-50 text-teal-800"
+                      : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300"
+                  }`}
+                  disabled={isBatchColoring || isColorTransferRunning}
+                  key={option.value}
+                  onClick={() => onSegmentationProviderTypeChange(option.value)}
+                  title={option.description}
+                  type="button"
+                >
+                  <span className="block text-sm font-semibold">{option.label}</span>
+                  <span className="mt-1 block text-[11px] leading-4 text-zinc-500">{option.description}</span>
+                </button>
+              ))}
+            </div>
+            {segmentationProviderType !== "traditional" ? (
+              <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+                AI 分割接口已预留，尚未接入模型；本次识别会自动回退到传统识别。
+              </p>
+            ) : null}
+          </div>
 
           <div className="mt-3">
             <p className="text-xs font-medium text-zinc-500">校色模式</p>
