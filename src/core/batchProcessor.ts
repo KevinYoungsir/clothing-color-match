@@ -3,19 +3,29 @@ import {
   isDefaultAdjustmentParams,
   type AdjustmentParams
 } from "./adjustment";
+import { generateAutoGarmentMask, type AutoMaskResult } from "./autoMask";
 import { transferLabColor } from "./colorTransfer";
 import { loadImageDataFromUrl } from "./imageLoader";
 import { hasMaskPixels } from "./maskUtils";
-import type { MaskState, UploadedImage } from "../types";
+import type {
+  ColorCorrectionScope,
+  GarmentRoi,
+  MaskRecognitionStatus,
+  MaskState,
+  SampleProcessStatus,
+  UploadedImage
+} from "../types";
 
 export type AutoColorParams = {
   colorStrength: number;
+  colorCorrectionScope: ColorCorrectionScope;
+  lightnessBlend: number;
   shadowProtection: number;
   highlightProtection: number;
   maskFeather: number;
 };
 
-export type BatchImageStatus = "queued" | "processing" | "done" | "missing-mask" | "failed";
+export type BatchImageStatus = Exclude<SampleProcessStatus, "idle" | "selected" | "recognition-failed">;
 
 export type BatchItemStatus = {
   imageId: string;
@@ -39,19 +49,24 @@ type ProcessSampleImageOptions = {
   adjustmentParams: AdjustmentParams;
   autoParams: AutoColorParams;
   referenceImageData: ImageData;
-  referenceMask: ImageData;
+  referenceMask?: ImageData | null;
   sampleImage: UploadedImage;
-  targetMask: ImageData;
+  targetMask?: ImageData | null;
 };
 
 type ProcessBatchImagesOptions = {
   adjustmentParams: AdjustmentParams;
   autoParams: AutoColorParams;
   masks: Record<string, MaskState>;
+  maskStatuses?: Record<string, MaskRecognitionStatus>;
   onStatusChange?: (status: BatchItemStatus) => void;
   referenceImageData: ImageData;
-  referenceMask: ImageData;
+  referenceMask?: ImageData | null;
   samples: UploadedImage[];
+  autoMaskFeather?: number;
+  garmentRois?: Record<string, GarmentRoi>;
+  minAutoMaskConfidence?: number;
+  onAutoMaskGenerated?: (image: UploadedImage, result: AutoMaskResult) => void;
 };
 
 function createStatus(
@@ -67,6 +82,34 @@ function createStatus(
   };
 }
 
+function createFullImageMask(width: number, height: number) {
+  const mask = new ImageData(width, height);
+
+  for (let index = 3; index < mask.data.length; index += 4) {
+    mask.data[index] = 255;
+  }
+
+  return mask;
+}
+
+function hasUsableMask(mask: ImageData | null | undefined) {
+  return Boolean(mask && hasMaskPixels(mask));
+}
+
+function isAutoMaskResultUsable(result: AutoMaskResult, minConfidence: number) {
+  const hasUnsafeCoverage = result.coverageRatio > 0.65;
+  const hasUnsafeBorderTouch =
+    result.touchesBorderRatio > 0.26 ||
+    (result.coverageRatio > 0.5 && result.touchesBorderRatio > 0.16);
+
+  return (
+    hasMaskPixels(result.mask) &&
+    result.confidence >= minConfidence &&
+    !hasUnsafeCoverage &&
+    !hasUnsafeBorderTouch
+  );
+}
+
 export async function processSampleImage({
   adjustmentParams,
   autoParams,
@@ -75,29 +118,73 @@ export async function processSampleImage({
   sampleImage,
   targetMask
 }: ProcessSampleImageOptions): Promise<ProcessedSampleResult> {
-  if (!hasMaskPixels(referenceMask)) {
+  const isFullImageScope = autoParams.colorCorrectionScope === "full-image";
+
+  if (!isFullImageScope && !hasUsableMask(referenceMask)) {
     throw new Error("请先选择标准图衣服参考区域");
   }
 
-  if (!hasMaskPixels(targetMask)) {
+  if (!isFullImageScope && !hasUsableMask(targetMask)) {
     throw new Error("缺少样品图衣服蒙版");
   }
 
   const originalImageData = await loadImageDataFromUrl(sampleImage.url, sampleImage.width, sampleImage.height);
   const transferResult = transferLabColor({
     ...autoParams,
+    fullImageMode: isFullImageScope,
     referenceImageData,
-    referenceMask,
+    referenceMask: hasUsableMask(referenceMask) ? referenceMask : null,
     targetImageData: originalImageData,
-    targetMask
+    targetMask: isFullImageScope ? null : targetMask
   });
+  const adjustmentMask = isFullImageScope
+    ? createFullImageMask(originalImageData.width, originalImageData.height)
+    : targetMask!;
   const finalImageData = isDefaultAdjustmentParams(adjustmentParams)
     ? transferResult.imageData
     : applyImageAdjustments({
         baseImageData: transferResult.imageData,
         originalImageData,
         params: adjustmentParams,
-        targetMask
+        targetMask: adjustmentMask
+      });
+
+  return {
+    colorTransferredImageData: transferResult.imageData,
+    finalImageData,
+    image: sampleImage,
+    originalImageData
+  };
+}
+
+function processLoadedSampleImage(
+  sampleImage: UploadedImage,
+  originalImageData: ImageData,
+  referenceImageData: ImageData,
+  referenceMask: ImageData | null | undefined,
+  targetMask: ImageData | null | undefined,
+  autoParams: AutoColorParams,
+  adjustmentParams: AdjustmentParams
+): ProcessedSampleResult {
+  const isFullImageScope = autoParams.colorCorrectionScope === "full-image";
+  const transferResult = transferLabColor({
+    ...autoParams,
+    fullImageMode: isFullImageScope,
+    referenceImageData,
+    referenceMask: hasUsableMask(referenceMask) ? referenceMask : null,
+    targetImageData: originalImageData,
+    targetMask: isFullImageScope ? null : targetMask
+  });
+  const adjustmentMask = isFullImageScope
+    ? createFullImageMask(originalImageData.width, originalImageData.height)
+    : targetMask!;
+  const finalImageData = isDefaultAdjustmentParams(adjustmentParams)
+    ? transferResult.imageData
+    : applyImageAdjustments({
+        baseImageData: transferResult.imageData,
+        originalImageData,
+        params: adjustmentParams,
+        targetMask: adjustmentMask
       });
 
   return {
@@ -111,35 +198,68 @@ export async function processSampleImage({
 export async function processBatchImages({
   adjustmentParams,
   autoParams,
+  autoMaskFeather = 2,
+  garmentRois = {},
   masks,
+  maskStatuses = {},
+  minAutoMaskConfidence = 0.45,
+  onAutoMaskGenerated,
   onStatusChange,
   referenceImageData,
   referenceMask,
   samples
 }: ProcessBatchImagesOptions): Promise<BatchProcessResult[]> {
   const results: BatchProcessResult[] = [];
+  const scope = autoParams.colorCorrectionScope;
 
   for (const sample of samples) {
     const maskState = masks[sample.id];
-
-    if (!maskState || !hasMaskPixels(maskState.imageData)) {
-      const status = createStatus(sample, "missing-mask", "缺少蒙版");
-      onStatusChange?.(status);
-      results.push(status);
-      continue;
-    }
+    const maskStatus = maskStatuses[sample.id] ?? "unrecognized";
+    const garmentRoi = garmentRois[sample.id] ?? null;
+    let targetMask: ImageData | null = maskState?.imageData ?? null;
 
     onStatusChange?.(createStatus(sample, "processing", "处理中"));
 
     try {
-      const result = await processSampleImage({
-        adjustmentParams,
-        autoParams,
+      const originalImageData = await loadImageDataFromUrl(sample.url, sample.width, sample.height);
+      const hasCurrentTargetMask = Boolean(targetMask && hasMaskPixels(targetMask));
+      const shouldUseCurrentMask = hasCurrentTargetMask && (!garmentRoi || maskStatus === "manual");
+
+      if (scope === "full-image") {
+        targetMask = null;
+      } else if (scope === "manual-mask") {
+        if (!hasCurrentTargetMask) {
+          const status = createStatus(sample, "missing-mask", "缺少蒙版");
+          onStatusChange?.(status);
+          results.push(status);
+          continue;
+        }
+      } else if (!shouldUseCurrentMask) {
+        const autoMaskResult = generateAutoGarmentMask(originalImageData, {
+          feather: autoMaskFeather,
+          roi: garmentRoi
+        });
+
+        if (!isAutoMaskResultUsable(autoMaskResult, minAutoMaskConfidence)) {
+          const status = createStatus(sample, "needs-manual-fix", "需手动修正");
+          onStatusChange?.(status);
+          results.push(status);
+          continue;
+        }
+
+        targetMask = autoMaskResult.mask;
+        onAutoMaskGenerated?.(sample, autoMaskResult);
+      }
+
+      const result = processLoadedSampleImage(
+        sample,
+        originalImageData,
         referenceImageData,
         referenceMask,
-        sampleImage: sample,
-        targetMask: maskState.imageData
-      });
+        targetMask,
+        autoParams,
+        adjustmentParams
+      );
       const status = createStatus(sample, "done", "已完成");
 
       onStatusChange?.(status);
