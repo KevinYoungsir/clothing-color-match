@@ -2,6 +2,22 @@
 
 This optional FastAPI service is a skeleton for future SAM / SAM2 / garment segmentation integration. It does not include or download any AI model.
 
+## Segmenter Architecture
+
+The server uses a small pluggable segmenter registry under `segmenters/`.
+
+- `segmenters/base.py` defines `SegmentInput`, `SegmentResult`, and `BaseSegmenter`.
+- `segmenters/mock_segmenter.py` implements the current ROI-based mock behavior.
+- `segmenters/registry.py` exposes `get_segmenter(name)`.
+
+The default segmenter is `mock`. You can select it explicitly:
+
+```powershell
+$env:AI_SEGMENTER="mock"
+```
+
+Future implementations can add new segmenters such as `lightweight` or `sam2` without changing the frontend `/segment-garment` contract.
+
 ## Setup
 
 ```powershell
