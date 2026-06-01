@@ -17,6 +17,8 @@ export type ColorCorrectionScope = "auto-garment" | "full-image" | "manual-mask"
 
 export type ColorMatchMode = "natural" | "accurate" | "strong";
 
+export type SegmentationProviderType = "traditional" | "ai-placeholder" | "remote-ai";
+
 export type GarmentRoi = {
   x: number;
   y: number;

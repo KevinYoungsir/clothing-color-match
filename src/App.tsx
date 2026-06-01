@@ -22,6 +22,7 @@ import {
 } from "./core/maskUtils";
 import { transferLabColor } from "./core/colorTransfer";
 import { calculateColorDifference } from "./core/colorDifference";
+import { optimizeSmartColorMatch } from "./core/smartColorMatch";
 import {
   applyImageAdjustments,
   defaultAdjustmentParams,
@@ -37,7 +38,7 @@ import {
   type BatchItemStatus,
   type ProcessedSampleResult
 } from "./core/batchProcessor";
-import { generateAutoGarmentMask, type AutoMaskResult } from "./core/autoMask";
+import { runGarmentSegmentation, type SegmentationResult } from "./core/segmentationProvider";
 import type {
   ColorDifferenceResult,
   ColorCorrectionScope,
@@ -49,6 +50,7 @@ import type {
   MaskState,
   MaskTool,
   SampleProcessStatus,
+  SegmentationProviderType,
   UploadedImage
 } from "./types";
 import {
@@ -101,6 +103,8 @@ export default function App() {
   const [sampleProcessMessages, setSampleProcessMessages] = useState<Record<string, string>>({});
   const [garmentRoiMap, setGarmentRoiMap] = useState<Record<string, GarmentRoi>>({});
   const [isRoiSelectionActive, setIsRoiSelectionActive] = useState(false);
+  const [segmentationProviderType, setSegmentationProviderType] =
+    useState<SegmentationProviderType>("traditional");
   const [colorCorrectionScope, setColorCorrectionScope] =
     useState<ColorCorrectionScope>("auto-garment");
   const [maskEditMode, setMaskEditMode] = useState<MaskEditMode>("target");
@@ -115,6 +119,7 @@ export default function App() {
   const [highlightProtection, setHighlightProtection] = useState(colorMatchModePresets.accurate.highlightProtection);
   const [lightnessBlend, setLightnessBlend] = useState(colorMatchModePresets.accurate.lightnessBlend);
   const [maskFeather, setMaskFeather] = useState(4);
+  const [smartColorOptimizationEnabled, setSmartColorOptimizationEnabled] = useState(false);
   const [processedImages, setProcessedImages] = useState<Record<string, ImageData>>({});
   const [adjustedImages, setAdjustedImages] = useState<Record<string, ImageData>>({});
   const [colorDifferenceResults, setColorDifferenceResults] = useState<Record<string, ColorDifferenceResult>>({});
@@ -167,9 +172,20 @@ export default function App() {
       highlightProtection,
       lightnessBlend,
       maskFeather,
+      segmentationProviderType,
+      smartColorOptimizationEnabled,
       shadowProtection
     }),
-    [colorCorrectionScope, colorStrength, highlightProtection, lightnessBlend, maskFeather, shadowProtection]
+    [
+      colorCorrectionScope,
+      colorStrength,
+      highlightProtection,
+      lightnessBlend,
+      maskFeather,
+      segmentationProviderType,
+      smartColorOptimizationEnabled,
+      shadowProtection
+    ]
   );
   const showUpscaleWarning = useMemo(() => {
     const targetLongEdge = getExportLongEdge(exportSize);
@@ -769,17 +785,17 @@ export default function App() {
     return mask;
   }
 
-  function getAutoMaskNotice(label: string, result: AutoMaskResult) {
-    const message = result.warning ?? result.reason;
+  function getAutoMaskNotice(label: string, result: SegmentationResult) {
+    const messages = [result.message, result.warning ?? result.reason].filter(Boolean);
 
-    if (message) {
-      return `${label}：${message}`;
+    if (messages.length > 0) {
+      return `${label}：${messages.join(" ")}`;
     }
 
     return null;
   }
 
-  function storeAutoTargetMask(image: UploadedImage, result: AutoMaskResult) {
+  function storeAutoTargetMask(image: UploadedImage, result: SegmentationResult) {
     setMaskStates((currentMasks) => ({
       ...currentMasks,
       [image.id]: createAutoMaskState(result.mask, currentMasks[image.id])
@@ -943,6 +959,31 @@ export default function App() {
     setExportMessage(null);
   }
 
+  function handleSegmentationProviderTypeChange(providerType: SegmentationProviderType) {
+    setSegmentationProviderType(providerType);
+    setColorTransferError(null);
+    setAdjustmentError(null);
+    setBatchColorMessage(null);
+    setBatchColorProgress(null);
+    setExportMessage(null);
+    setAutoMaskNotice(
+      providerType === "traditional"
+        ? null
+        : "AI 分割接口已预留，尚未接入模型；自动识别时会回退到传统识别。"
+    );
+  }
+
+  function handleSmartColorOptimizationChange(isEnabled: boolean) {
+    setSmartColorOptimizationEnabled(isEnabled);
+    setColorTransferError(null);
+    setAdjustmentError(null);
+    setAutoMaskNotice(
+      isEnabled
+        ? "已开启智能校色优化，点击重新校色后会在 Lab 校色基础上进一步降低色差。"
+        : "已关闭智能校色优化，点击重新校色后使用基础 Lab 校色结果。"
+    );
+  }
+
   function handleColorCorrectionScopeChange(scope: ColorCorrectionScope) {
     setColorCorrectionScope(scope);
     setColorTransferError(null);
@@ -978,7 +1019,7 @@ export default function App() {
     setIsMaskVisible(false);
   }
 
-  function ensureMaskConfidence(label: string, result: AutoMaskResult) {
+  function ensureMaskConfidence(label: string, result: SegmentationResult) {
     if (!hasMaskPixels(result.mask)) {
       throw new Error(`${label}自动识别失败，请点击编辑校色范围手动修正。`);
     }
@@ -1006,12 +1047,21 @@ export default function App() {
     setAutoMaskNotice(message);
   }
 
-  function ensureReferenceMask(referenceImageData: ImageData) {
+  async function ensureReferenceMask(referenceImageData: ImageData) {
     if (referenceMaskState && hasMaskPixels(referenceMaskState.imageData)) {
       return referenceMaskState.imageData;
     }
 
-    const autoMaskResult = generateAutoGarmentMask(referenceImageData, { feather: 2 });
+    const autoMaskResult = await runGarmentSegmentation(
+      {
+        imageData: referenceImageData,
+        mode: "reference",
+        options: {
+          feather: 2
+        }
+      },
+      segmentationProviderType
+    );
     ensureMaskConfidence("标准图", autoMaskResult);
 
     setReferenceMaskState((currentMask) => createAutoMaskState(autoMaskResult.mask, currentMask));
@@ -1021,7 +1071,7 @@ export default function App() {
     return autoMaskResult.mask;
   }
 
-  function getReferenceMaskForScope(referenceImageData: ImageData) {
+  async function getReferenceMaskForScope(referenceImageData: ImageData) {
     if (colorCorrectionScope === "full-image") {
       return referenceMaskState && hasMaskPixels(referenceMaskState.imageData)
         ? referenceMaskState.imageData
@@ -1031,7 +1081,7 @@ export default function App() {
     return ensureReferenceMask(referenceImageData);
   }
 
-  function ensureTargetMask(sample: UploadedImage, targetImageData: ImageData) {
+  async function ensureTargetMask(sample: UploadedImage, targetImageData: ImageData) {
     if (colorCorrectionScope === "full-image") {
       return null;
     }
@@ -1050,10 +1100,17 @@ export default function App() {
       throw new Error("样品图缺少手动蒙版，请点击编辑校色范围手动绘制。");
     }
 
-    const autoMaskResult = generateAutoGarmentMask(targetImageData, {
-      feather: 2,
-      roi: garmentRoiMap[sample.id] ?? null
-    });
+    const autoMaskResult = await runGarmentSegmentation(
+      {
+        imageData: targetImageData,
+        mode: "garment",
+        options: {
+          feather: 2
+        },
+        roi: garmentRoiMap[sample.id] ?? null
+      },
+      segmentationProviderType
+    );
     ensureMaskConfidence("样品图", autoMaskResult);
     storeAutoTargetMask(sample, autoMaskResult);
     setAutoMaskNotice(getAutoMaskNotice("样品图", autoMaskResult));
@@ -1067,7 +1124,7 @@ export default function App() {
     }
 
     const referenceImageData = await loadImageDataFromUrl(referenceImage.url, referenceImage.width, referenceImage.height);
-    const referenceMask = getReferenceMaskForScope(referenceImageData);
+    const referenceMask = await getReferenceMaskForScope(referenceImageData);
 
     return {
       referenceImageData,
@@ -1106,7 +1163,16 @@ export default function App() {
           referenceImage.width,
           referenceImage.height
         );
-        const autoMaskResult = generateAutoGarmentMask(referenceImageData, { feather: 2 });
+        const autoMaskResult = await runGarmentSegmentation(
+          {
+            imageData: referenceImageData,
+            mode: "reference",
+            options: {
+              feather: 2
+            }
+          },
+          segmentationProviderType
+        );
         ensureMaskConfidence("标准图", autoMaskResult);
 
         setReferenceMaskState((currentMask) => createAutoMaskState(autoMaskResult.mask, currentMask));
@@ -1129,10 +1195,17 @@ export default function App() {
         selectedSample.width,
         selectedSample.height
       );
-      const autoMaskResult = generateAutoGarmentMask(targetImageData, {
-        feather: 2,
-        roi: garmentRoiMap[selectedSample.id] ?? null
-      });
+      const autoMaskResult = await runGarmentSegmentation(
+        {
+          imageData: targetImageData,
+          mode: "garment",
+          options: {
+            feather: 2
+          },
+          roi: garmentRoiMap[selectedSample.id] ?? null
+        },
+        segmentationProviderType
+      );
       ensureMaskConfidence("样品图", autoMaskResult);
 
       storeAutoTargetMask(selectedSample, autoMaskResult);
@@ -1395,7 +1468,7 @@ export default function App() {
         selectedSample.width,
         selectedSample.height
       );
-      const targetMask = ensureTargetMask(selectedSample, targetImageData);
+      const targetMask = await ensureTargetMask(selectedSample, targetImageData);
       const result = await processSampleImage({
         adjustmentParams,
         autoParams: autoColorParams,
@@ -1550,8 +1623,8 @@ export default function App() {
         loadImageDataFromUrl(referenceImage.url, referenceImage.width, referenceImage.height),
         loadImageDataFromUrl(selectedSample.url, selectedSample.width, selectedSample.height)
       ]);
-      const referenceMask = getReferenceMaskForScope(referenceImageData);
-      const targetMask = ensureTargetMask(selectedSample, targetImageData);
+      const referenceMask = await getReferenceMaskForScope(referenceImageData);
+      const targetMask = await ensureTargetMask(selectedSample, targetImageData);
       const result = transferLabColor({
         colorStrength,
         fullImageMode: colorCorrectionScope === "full-image",
@@ -1564,10 +1637,25 @@ export default function App() {
         targetImageData,
         targetMask
       });
+      const colorTransferredImageData = smartColorOptimizationEnabled
+        ? optimizeSmartColorMatch({
+            baseImageData: result.imageData,
+            colorStrength,
+            fullImageMode: colorCorrectionScope === "full-image",
+            highlightProtection,
+            lightnessBlend,
+            maskFeather,
+            referenceImageData,
+            referenceMask,
+            shadowProtection,
+            sourceImageData: targetImageData,
+            targetMask
+          }).imageData
+        : result.imageData;
 
       setProcessedImages((currentImages) => ({
         ...currentImages,
-        [selectedSample.id]: result.imageData
+        [selectedSample.id]: colorTransferredImageData
       }));
       setSampleMaskStatuses((currentStatuses) => ({
         ...currentStatuses,
@@ -1669,6 +1757,8 @@ export default function App() {
             maskTool={maskTool}
             referenceMaskStatus={referenceMaskStatus}
             selectedSampleMaskStatus={selectedSampleMaskStatus}
+            segmentationProviderType={segmentationProviderType}
+            smartColorOptimizationEnabled={smartColorOptimizationEnabled}
             onBrushSizeChange={setBrushSize}
             onColorCorrectionScopeChange={handleColorCorrectionScopeChange}
             onColorStrengthChange={setColorStrength}
@@ -1687,7 +1777,9 @@ export default function App() {
             onRegenerateAutoMask={handleRegenerateAutoMask}
             onResetAdjustmentParam={handleResetAdjustmentParam}
             onResetAllAdjustments={handleResetAllAdjustments}
+            onSegmentationProviderTypeChange={handleSegmentationProviderTypeChange}
             onShadowProtectionChange={setShadowProtection}
+            onSmartColorOptimizationChange={handleSmartColorOptimizationChange}
             onStartGarmentRoiSelection={handleStartGarmentRoiSelection}
             onToggleMaskVisible={handleToggleMaskVisible}
             onUndoMask={handleUndoMask}
