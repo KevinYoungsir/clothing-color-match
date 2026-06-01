@@ -2,6 +2,7 @@ import type { AdjustmentKey, AdjustmentParams } from "../core/adjustment";
 import type {
   ColorCorrectionScope,
   ColorDifferenceResult,
+  ColorMatchMode,
   MaskEditMode,
   MaskRecognitionStatus,
   MaskTool
@@ -19,6 +20,7 @@ type AdjustmentPanelProps = {
   canUndoMask: boolean;
   colorCorrectionScope: ColorCorrectionScope;
   colorDifferenceResult: ColorDifferenceResult | null;
+  colorMatchMode: ColorMatchMode;
   colorStrength: number;
   colorTransferError: string | null;
   hasColorResult: boolean;
@@ -38,6 +40,7 @@ type AdjustmentPanelProps = {
   onBrushSizeChange: (value: number) => void;
   onClearGarmentRoi: () => void;
   onColorCorrectionScopeChange: (scope: ColorCorrectionScope) => void;
+  onColorMatchModeChange: (mode: ColorMatchMode) => void;
   onColorStrengthChange: (value: number) => void;
   onApplyColorTransfer: () => void;
   onAdjustmentParamChange: (key: AdjustmentKey, value: number) => void;
@@ -108,6 +111,28 @@ const colorCorrectionScopeOptions: Array<{
   }
 ];
 
+const colorMatchModeOptions: Array<{
+  description: string;
+  label: string;
+  value: ColorMatchMode;
+}> = [
+  {
+    description: "保留环境光和原图质感，适合模特图、场景图。",
+    label: "自然",
+    value: "natural"
+  },
+  {
+    description: "尽量接近标准图，适合白底样品图。",
+    label: "精准",
+    value: "accurate"
+  },
+  {
+    description: "颜色差异大时使用，更接近标准图但自然感略弱。",
+    label: "强力",
+    value: "strong"
+  }
+];
+
 const colorDifferenceLabels: Record<ColorDifferenceResult["assessment"], {
   className: string;
   text: string;
@@ -150,6 +175,7 @@ export function AdjustmentPanel({
   canUndoMask,
   colorCorrectionScope,
   colorDifferenceResult,
+  colorMatchMode,
   colorStrength,
   colorTransferError,
   hasColorResult,
@@ -169,6 +195,7 @@ export function AdjustmentPanel({
   onBrushSizeChange,
   onClearGarmentRoi,
   onColorCorrectionScopeChange,
+  onColorMatchModeChange,
   onColorStrengthChange,
   onApplyColorTransfer,
   onAdjustmentParamChange,
@@ -229,6 +256,29 @@ export function AdjustmentPanel({
                 ? "手动蒙版模式只校色你绘制的样品蒙版区域，适合精修复杂背景图片。"
                 : "上传标准图和样品图后可直接自动识别并校色。自动识别适合白底图、透明底图、服装主体清晰的图片；如果识别不准确，可用画笔和橡皮擦修正。"}
           </p>
+
+          <div className="mt-3">
+            <p className="text-xs font-medium text-zinc-500">校色模式</p>
+            <div className="mt-2 grid grid-cols-3 gap-2">
+              {colorMatchModeOptions.map((option) => (
+                <button
+                  className={`rounded-md border px-2 py-2 text-left transition ${
+                    colorMatchMode === option.value
+                      ? "border-teal-500 bg-teal-50 text-teal-800"
+                      : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300"
+                  }`}
+                  disabled={isBatchColoring || isColorTransferRunning}
+                  key={option.value}
+                  onClick={() => onColorMatchModeChange(option.value)}
+                  title={option.description}
+                  type="button"
+                >
+                  <span className="block text-sm font-semibold">{option.label}</span>
+                  <span className="mt-1 block text-[11px] leading-4 text-zinc-500">{option.description}</span>
+                </button>
+              ))}
+            </div>
+          </div>
 
           <div className="mt-3">
             <p className="text-xs font-medium text-zinc-500">校色范围</p>

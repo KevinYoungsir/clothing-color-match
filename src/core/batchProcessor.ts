@@ -19,6 +19,7 @@ import type {
 export type AutoColorParams = {
   colorStrength: number;
   colorCorrectionScope: ColorCorrectionScope;
+  lightnessBlend: number;
   shadowProtection: number;
   highlightProtection: number;
   maskFeather: number;

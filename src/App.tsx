@@ -41,6 +41,7 @@ import { generateAutoGarmentMask, type AutoMaskResult } from "./core/autoMask";
 import type {
   ColorDifferenceResult,
   ColorCorrectionScope,
+  ColorMatchMode,
   GarmentRoi,
   MaskEditMode,
   MaskPoint,
@@ -58,6 +59,32 @@ import {
   type ExportSize
 } from "./core/exportImage";
 import { createZipBlob } from "./core/simpleZip";
+
+const colorMatchModePresets: Record<ColorMatchMode, {
+  colorStrength: number;
+  highlightProtection: number;
+  lightnessBlend: number;
+  shadowProtection: number;
+}> = {
+  accurate: {
+    colorStrength: 80,
+    highlightProtection: 30,
+    lightnessBlend: 0.12,
+    shadowProtection: 30
+  },
+  natural: {
+    colorStrength: 55,
+    highlightProtection: 45,
+    lightnessBlend: 0.05,
+    shadowProtection: 45
+  },
+  strong: {
+    colorStrength: 100,
+    highlightProtection: 15,
+    lightnessBlend: 0.2,
+    shadowProtection: 15
+  }
+};
 
 export default function App() {
   const [referenceImage, setReferenceImage] = useState<UploadedImage | null>(null);
@@ -82,9 +109,11 @@ export default function App() {
   const [brushSize, setBrushSize] = useState(32);
   const [maskOpacity, setMaskOpacity] = useState(55);
   const [isMaskVisible, setIsMaskVisible] = useState(false);
-  const [colorStrength, setColorStrength] = useState(70);
-  const [shadowProtection, setShadowProtection] = useState(35);
-  const [highlightProtection, setHighlightProtection] = useState(35);
+  const [colorMatchMode, setColorMatchMode] = useState<ColorMatchMode>("accurate");
+  const [colorStrength, setColorStrength] = useState(colorMatchModePresets.accurate.colorStrength);
+  const [shadowProtection, setShadowProtection] = useState(colorMatchModePresets.accurate.shadowProtection);
+  const [highlightProtection, setHighlightProtection] = useState(colorMatchModePresets.accurate.highlightProtection);
+  const [lightnessBlend, setLightnessBlend] = useState(colorMatchModePresets.accurate.lightnessBlend);
   const [maskFeather, setMaskFeather] = useState(4);
   const [processedImages, setProcessedImages] = useState<Record<string, ImageData>>({});
   const [adjustedImages, setAdjustedImages] = useState<Record<string, ImageData>>({});
@@ -136,10 +165,11 @@ export default function App() {
       colorStrength,
       colorCorrectionScope,
       highlightProtection,
+      lightnessBlend,
       maskFeather,
       shadowProtection
     }),
-    [colorCorrectionScope, colorStrength, highlightProtection, maskFeather, shadowProtection]
+    [colorCorrectionScope, colorStrength, highlightProtection, lightnessBlend, maskFeather, shadowProtection]
   );
   const showUpscaleWarning = useMemo(() => {
     const targetLongEdge = getExportLongEdge(exportSize);
@@ -895,6 +925,26 @@ export default function App() {
     });
   }
 
+  function handleColorMatchModeChange(mode: ColorMatchMode) {
+    const preset = colorMatchModePresets[mode];
+
+    setColorMatchMode(mode);
+    setColorStrength(preset.colorStrength);
+    setLightnessBlend(preset.lightnessBlend);
+    setShadowProtection(preset.shadowProtection);
+    setHighlightProtection(preset.highlightProtection);
+    setColorTransferError(null);
+    setAutoMaskNotice(null);
+    setAdjustmentError(null);
+    setProcessedImages({});
+    setAdjustedImages({});
+    setColorDifferenceResults({});
+    setBatchStatuses({});
+    setBatchColorMessage(null);
+    setBatchColorProgress(null);
+    setExportMessage(null);
+  }
+
   function handleColorCorrectionScopeChange(scope: ColorCorrectionScope) {
     setColorCorrectionScope(scope);
     setColorTransferError(null);
@@ -1508,6 +1558,7 @@ export default function App() {
         colorStrength,
         fullImageMode: colorCorrectionScope === "full-image",
         highlightProtection,
+        lightnessBlend,
         maskFeather,
         referenceImageData,
         referenceMask,
@@ -1599,6 +1650,7 @@ export default function App() {
             canUndoMask={canUndoMask}
             colorCorrectionScope={colorCorrectionScope}
             colorDifferenceResult={selectedColorDifferenceResult}
+            colorMatchMode={colorMatchMode}
             colorStrength={colorStrength}
             colorTransferError={colorTransferError}
             autoMaskNotice={autoMaskNotice}
@@ -1624,6 +1676,7 @@ export default function App() {
             onColorStrengthChange={setColorStrength}
             onClearGarmentRoi={handleClearGarmentRoi}
             onClearMask={handleClearMask}
+            onColorMatchModeChange={handleColorMatchModeChange}
             onEditColorRange={handleEditColorRange}
             onHighlightProtectionChange={setHighlightProtection}
             onApplyColorTransfer={handleApplyColorTransfer}
