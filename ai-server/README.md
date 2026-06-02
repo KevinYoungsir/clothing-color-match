@@ -53,6 +53,38 @@ This keeps future lightweight or SAM/SAM2 segmenters from accidentally returning
 
 Do not install heavyweight inference dependencies for the mock server. A future real lightweight segmenter may add dependencies such as `onnxruntime`, and a SAM/SAM2 segmenter may add PyTorch-related packages such as `torch`, `torchvision`, and `sam2`. Those should be introduced only with the real model integration task, and model files must not be committed to the repo.
 
+## Python Version and Lightweight Dependencies
+
+Use Python 3.11 or 3.12 for real lightweight ONNX inference work. Python 3.14 is not recommended for this stage because some AI inference packages may not publish compatible wheels yet.
+
+The base mock server stays intentionally small:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+When starting the future lightweight ONNX integration task, install the optional lightweight dependency set separately:
+
+```powershell
+pip install -r requirements-lightweight.txt
+```
+
+`requirements-lightweight.txt` currently reserves:
+
+- `onnxruntime` for ONNX model inference.
+- `numpy` for tensor and mask array processing.
+- `opencv-python-headless` as a commented optional helper for future preprocessing.
+
+You can check the local Python environment without installing anything:
+
+```powershell
+python scripts/check_environment.py
+```
+
+Missing lightweight dependencies are reported as informational warnings while the `lightweight` segmenter remains a placeholder.
+
 ## Real Model File Management
 
 Real model files should not be committed to GitHub.

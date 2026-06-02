@@ -1,0 +1,7 @@
+# Optional dependencies for future lightweight ONNX garment segmentation.
+# Install this file only when working on real lightweight model inference.
+onnxruntime
+numpy
+
+# Optional image preprocessing helper. Uncomment only if a future model adapter needs it.
+# opencv-python-headless
