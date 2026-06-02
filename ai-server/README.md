@@ -115,6 +115,32 @@ $env:AI_LIGHTWEIGHT_MODEL_PATH="ai-server\models\garment.onnx"
 
 Because model input and output conventions vary, a future model-specific adapter may still be needed after the first real model is selected.
 
+You can verify the lightweight safety paths without a real model:
+
+```powershell
+python scripts/verify_lightweight.py
+```
+
+To verify a missing model path explicitly:
+
+```powershell
+python scripts/verify_lightweight.py --model-path ai-server\models\garment.onnx --expect-missing-model
+```
+
+After a real ONNX model is available locally, the same script can check whether the adapter returns either a safe failure or an ROI-limited mask:
+
+```powershell
+python scripts/verify_lightweight.py --model-path ai-server\models\garment.onnx
+```
+
+If you start FastAPI with `AI_SEGMENTER=lightweight`, you can also point the script at the running server:
+
+```powershell
+python scripts/verify_lightweight.py --base-url http://localhost:8000
+```
+
+Model files must stay out of Git.
+
 ## Real Model File Management
 
 Real model files should not be committed to GitHub.
@@ -175,6 +201,13 @@ Then run the verification script from the `ai-server/` directory:
 
 ```powershell
 python scripts/verify_segment.py
+```
+
+For lightweight ONNX safety checks, run:
+
+```powershell
+python scripts/check_environment.py
+python scripts/verify_lightweight.py
 ```
 
 You can also point it at another local server:
