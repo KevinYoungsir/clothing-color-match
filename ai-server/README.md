@@ -60,6 +60,34 @@ VITE_AI_SEGMENTATION_API=http://localhost:8000/segment-garment
 
 Restart the Vite dev server after changing `.env`.
 
+## Local Verification
+
+Start the backend first:
+
+```powershell
+uvicorn main:app --reload --port 8000
+```
+
+Then run the verification script from the `ai-server/` directory:
+
+```powershell
+python scripts/verify_segment.py
+```
+
+You can also point it at another local server:
+
+```powershell
+python scripts/verify_segment.py --base-url http://localhost:8000
+```
+
+The script checks:
+
+- `/health` returns `{ "ok": true }`.
+- `/segment-garment` accepts a PNG image and ROI.
+- ROI mock mask dimensions match the input image.
+- ROI pixels are white and pixels outside ROI are black.
+- A request without ROI returns `success: false`.
+
 ## Endpoints
 
 ### `GET /health`
