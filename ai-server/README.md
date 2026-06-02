@@ -18,14 +18,14 @@ The default segmenter is `mock`. You can select it explicitly:
 $env:AI_SEGMENTER="mock"
 ```
 
-The `lightweight` segmenter is registered as a placeholder for a future small garment segmentation model. It does not run real inference yet:
+The `lightweight` segmenter contains a generic ONNX inference skeleton for a future small garment segmentation model:
 
 ```powershell
 $env:AI_SEGMENTER="lightweight"
 $env:AI_LIGHTWEIGHT_MODEL_PATH="path\to\model.onnx"
 ```
 
-If `AI_LIGHTWEIGHT_MODEL_PATH` is missing or points to a missing file, `/segment-garment` returns `success: false` with a clear message. It does not fall back to a full-image mask or generate a fake garment mask.
+If `AI_LIGHTWEIGHT_MODEL_PATH` is missing or points to a missing file, `/segment-garment` returns `success: false` with a clear message. If ONNX dependencies are missing, the model cannot load, or the first output cannot be parsed as a mask, it also returns `success: false` so the frontend can fall back to traditional segmentation. It does not fall back to a full-image mask or generate a fake garment mask.
 
 The `sam2` segmenter is registered as a placeholder for future high-precision SAM2 garment segmentation. It does not import torch or load a real SAM2 model yet:
 
@@ -83,7 +83,37 @@ You can check the local Python environment without installing anything:
 python scripts/check_environment.py
 ```
 
-Missing lightweight dependencies are reported as informational warnings while the `lightweight` segmenter remains a placeholder.
+Missing lightweight dependencies are reported as informational warnings until you intentionally enable real lightweight ONNX inference.
+
+## Lightweight ONNX Inference Skeleton
+
+The `lightweight` segmenter is a generic ONNX adapter, not a model-specific implementation yet. It:
+
+- Reads `AI_LIGHTWEIGHT_MODEL_PATH`.
+- Imports `onnxruntime` and `numpy` only when `AI_SEGMENTER=lightweight` is used.
+- Loads the ONNX model with CPU execution.
+- Reads the first model input and supports static 4D NCHW or NHWC image tensors.
+- Resizes the image to the model input size and converts it to a float32 tensor.
+- Runs `session.run`.
+- Tries to parse the first output as a binary or two-class mask.
+- Returns `success: false` if the model output shape cannot be safely interpreted.
+- Sends successful masks through `segmenters/postprocess.py`, so `roi` / `promptBox` can still force pixels outside the selected region to black.
+
+Install the optional dependencies before trying a real lightweight ONNX model:
+
+```powershell
+pip install -r requirements.txt
+pip install -r requirements-lightweight.txt
+```
+
+Configure the segmenter:
+
+```powershell
+$env:AI_SEGMENTER="lightweight"
+$env:AI_LIGHTWEIGHT_MODEL_PATH="ai-server\models\garment.onnx"
+```
+
+Because model input and output conventions vary, a future model-specific adapter may still be needed after the first real model is selected.
 
 ## Real Model File Management
 
@@ -112,7 +142,7 @@ $env:AI_SAM2_CHECKPOINT="path\to\sam2_checkpoint.pt"
 $env:AI_SAM2_CONFIG="path\to\sam2_config.yaml"
 ```
 
-The `lightweight` and `sam2` segmenters are still placeholders in the current codebase. Real model inference will be added in a later task.
+The `sam2` segmenter is still a placeholder in the current codebase. The `lightweight` segmenter has a generic ONNX inference skeleton, but no model file is included.
 
 ## Setup
 

@@ -1,7 +1,9 @@
 import importlib.util
+from os import getenv
 import platform
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable, List
 
 
@@ -64,9 +66,25 @@ def print_package_checks(checks: Iterable[PackageCheck]) -> List[str]:
     return missing_required
 
 
+def print_lightweight_model_check() -> None:
+    model_path = getenv("AI_LIGHTWEIGHT_MODEL_PATH")
+
+    print("\nLightweight model")
+
+    if not model_path:
+        print("- AI_LIGHTWEIGHT_MODEL_PATH: NOT SET (only needed for real ONNX inference)")
+        return
+
+    resolved_model_path = Path(model_path).expanduser()
+    status = "OK" if resolved_model_path.exists() else "MISSING"
+
+    print(f"- AI_LIGHTWEIGHT_MODEL_PATH: {resolved_model_path} ({status})")
+
+
 def main() -> int:
     print_python_check()
     missing_required = print_package_checks(PACKAGE_CHECKS)
+    print_lightweight_model_check()
 
     print("\nNotes")
     print("- requirements.txt keeps the mock FastAPI server dependency set small.")
