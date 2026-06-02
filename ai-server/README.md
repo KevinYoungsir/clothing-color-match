@@ -2,6 +2,57 @@
 
 This optional FastAPI service is a skeleton for future SAM / SAM2 / garment segmentation integration. It does not include or download any AI model.
 
+## Segmenter Architecture
+
+The server uses a small pluggable segmenter registry under `segmenters/`.
+
+- `segmenters/base.py` defines `SegmentInput`, `SegmentResult`, and `BaseSegmenter`.
+- `segmenters/mock_segmenter.py` implements the current ROI-based mock behavior.
+- `segmenters/lightweight_segmenter.py` reserves a future lightweight garment segmentation adapter.
+- `segmenters/sam2_segmenter.py` reserves a future high-precision SAM2 adapter.
+- `segmenters/registry.py` exposes `get_segmenter(name)`.
+
+The default segmenter is `mock`. You can select it explicitly:
+
+```powershell
+$env:AI_SEGMENTER="mock"
+```
+
+The `lightweight` segmenter is registered as a placeholder for a future small garment segmentation model. It does not run real inference yet:
+
+```powershell
+$env:AI_SEGMENTER="lightweight"
+$env:AI_LIGHTWEIGHT_MODEL_PATH="path\to\model.onnx"
+```
+
+If `AI_LIGHTWEIGHT_MODEL_PATH` is missing or points to a missing file, `/segment-garment` returns `success: false` with a clear message. It does not fall back to a full-image mask or generate a fake garment mask.
+
+The `sam2` segmenter is registered as a placeholder for future high-precision SAM2 garment segmentation. It does not import torch or load a real SAM2 model yet:
+
+```powershell
+$env:AI_SEGMENTER="sam2"
+$env:AI_SAM2_CHECKPOINT="path\to\sam2_checkpoint.pt"
+$env:AI_SAM2_CONFIG="path\to\sam2_config.yaml"
+```
+
+If `AI_SAM2_CHECKPOINT` or `AI_SAM2_CONFIG` is missing, or either path does not exist, `/segment-garment` returns `success: false` with a clear message. It does not fall back to a full-image mask or generate a fake garment mask.
+
+Future implementations can add real `lightweight` or `sam2` inference without changing the frontend `/segment-garment` contract.
+
+## Mask Postprocessing
+
+`segmenters/postprocess.py` contains shared mask postprocessing helpers.
+
+- If `roi` or `promptBox` is provided, every pixel outside that rectangle is forced to black.
+- If a model returns a mask with a different size from the input image, the mask is resized safely with nearest-neighbor sampling.
+- If no `roi` or `promptBox` is provided, postprocessing does not create a new full-image mask.
+
+This keeps future lightweight or SAM/SAM2 segmenters from accidentally returning a whole-image garment mask when the user has provided a tighter garment region.
+
+## Future Real Model Dependencies
+
+Do not install heavyweight inference dependencies for the mock server. A future real lightweight segmenter may add dependencies such as `onnxruntime`, and a SAM/SAM2 segmenter may add PyTorch-related packages such as `torch`, `torchvision`, and `sam2`. Those should be introduced only with the real model integration task, and model files must not be committed to the repo.
+
 ## Setup
 
 ```powershell
@@ -20,6 +71,34 @@ VITE_AI_SEGMENTATION_API=http://localhost:8000/segment-garment
 ```
 
 Restart the Vite dev server after changing `.env`.
+
+## Local Verification
+
+Start the backend first:
+
+```powershell
+uvicorn main:app --reload --port 8000
+```
+
+Then run the verification script from the `ai-server/` directory:
+
+```powershell
+python scripts/verify_segment.py
+```
+
+You can also point it at another local server:
+
+```powershell
+python scripts/verify_segment.py --base-url http://localhost:8000
+```
+
+The script checks:
+
+- `/health` returns `{ "ok": true }`.
+- `/segment-garment` accepts a PNG image and ROI.
+- ROI mock mask dimensions match the input image.
+- ROI pixels are white and pixels outside ROI are black.
+- A request without ROI returns `success: false`.
 
 ## Endpoints
 
