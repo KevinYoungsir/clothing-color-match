@@ -53,6 +53,35 @@ This keeps future lightweight or SAM/SAM2 segmenters from accidentally returning
 
 Do not install heavyweight inference dependencies for the mock server. A future real lightweight segmenter may add dependencies such as `onnxruntime`, and a SAM/SAM2 segmenter may add PyTorch-related packages such as `torch`, `torchvision`, and `sam2`. Those should be introduced only with the real model integration task, and model files must not be committed to the repo.
 
+## Real Model File Management
+
+Real model files should not be committed to GitHub.
+
+The recommended local model directory is:
+
+```txt
+ai-server/models/
+```
+
+You can also keep model files outside the repository and point the server to them with environment variables.
+
+Lightweight mode example:
+
+```powershell
+$env:AI_SEGMENTER="lightweight"
+$env:AI_LIGHTWEIGHT_MODEL_PATH="ai-server\models\garment.onnx"
+```
+
+SAM2 mode example:
+
+```powershell
+$env:AI_SEGMENTER="sam2"
+$env:AI_SAM2_CHECKPOINT="path\to\sam2_checkpoint.pt"
+$env:AI_SAM2_CONFIG="path\to\sam2_config.yaml"
+```
+
+The `lightweight` and `sam2` segmenters are still placeholders in the current codebase. Real model inference will be added in a later task.
+
 ## Setup
 
 ```powershell

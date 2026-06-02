@@ -7,3 +7,13 @@ dist/
 __pycache__/
 *.pyc
 ai-server/.venv/
+
+# AI model artifacts
+ai-server/models/
+*.onnx
+*.pt
+*.pth
+*.safetensors
+*.ckpt
+*.engine
+*.bin
