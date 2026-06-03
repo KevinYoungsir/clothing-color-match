@@ -121,6 +121,14 @@ You can verify the lightweight safety paths without a real model:
 python scripts/verify_lightweight.py
 ```
 
+You can inspect a local ONNX model contract before wiring it into the segmenter:
+
+```powershell
+python scripts/inspect_onnx_model.py --model-path "ai-server\models\garment.onnx"
+```
+
+The inspector prints input/output names, shapes, types, provider information, and whether the current generic skeleton is likely compatible. It does not run image inference or generate a mask. If the input is not static 4D NCHW / NHWC, or if the output is not a 2D/3D/4D mask-like tensor, a future model-specific adapter will likely be needed.
+
 To verify a missing model path explicitly:
 
 ```powershell
@@ -207,6 +215,7 @@ For lightweight ONNX safety checks, run:
 
 ```powershell
 python scripts/check_environment.py
+python scripts/inspect_onnx_model.py --model-path "ai-server\models\garment.onnx"
 python scripts/verify_lightweight.py
 ```
 
