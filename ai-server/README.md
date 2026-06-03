@@ -92,10 +92,11 @@ The `lightweight` segmenter is a generic ONNX adapter, not a model-specific impl
 - Reads `AI_LIGHTWEIGHT_MODEL_PATH`.
 - Imports `onnxruntime` and `numpy` only when `AI_SEGMENTER=lightweight` is used.
 - Loads the ONNX model with CPU execution.
-- Reads the first model input and supports static 4D NCHW or NHWC image tensors.
-- Resizes the image to the model input size and converts it to a float32 tensor.
+- Reads the first model input and supports static 4D NCHW / NHWC image tensors, plus dynamic NCHW tensors such as `[batch_size, num_channels, height, width]`.
+- Resizes the image to the configured input size and converts it to an RGB float32 tensor in the 0-1 range.
 - Runs `session.run`.
-- Tries to parse the first output as a binary or two-class mask.
+- Tries to parse the first output as a binary / two-class mask, or as multi-class logits `[1, num_labels, height, width]`.
+- Converts multi-class logits to a garment mask with `argmax` and `AI_LIGHTWEIGHT_CLOTHING_LABELS`.
 - Returns `success: false` if the model output shape cannot be safely interpreted.
 - Sends successful masks through `segmenters/postprocess.py`, so `roi` / `promptBox` can still force pixels outside the selected region to black.
 
@@ -111,9 +112,13 @@ Configure the segmenter:
 ```powershell
 $env:AI_SEGMENTER="lightweight"
 $env:AI_LIGHTWEIGHT_MODEL_PATH="ai-server\models\garment.onnx"
+$env:AI_LIGHTWEIGHT_INPUT_SIZE="512"
+$env:AI_LIGHTWEIGHT_CLOTHING_LABELS="4,5,6,7"
 ```
 
-Because model input and output conventions vary, a future model-specific adapter may still be needed after the first real model is selected.
+`AI_LIGHTWEIGHT_INPUT_SIZE` defaults to `512` when the model uses dynamic height / width. `AI_LIGHTWEIGHT_CLOTHING_LABELS` defaults to `4,5,6,7`; adjust it to match the selected model label map. If the adapter returns "未检测到服装类别", the model may be working but the clothing label ids likely need to be changed.
+
+The current preprocessing uses RGB and 0-1 normalization. If a selected model requires ImageNet mean / std normalization or a different class map, add that as a model-specific follow-up instead of guessing silently.
 
 You can verify the lightweight safety paths without a real model:
 
@@ -127,7 +132,7 @@ You can inspect a local ONNX model contract before wiring it into the segmenter:
 python scripts/inspect_onnx_model.py --model-path "ai-server\models\garment.onnx"
 ```
 
-The inspector prints input/output names, shapes, types, provider information, and whether the current generic skeleton is likely compatible. It does not run image inference or generate a mask. If the input is not static 4D NCHW / NHWC, or if the output is not a 2D/3D/4D mask-like tensor, a future model-specific adapter will likely be needed.
+The inspector prints input/output names, shapes, types, provider information, and whether the current generic skeleton is likely compatible. It does not run image inference or generate a mask. The lightweight adapter supports static 4D NCHW / NHWC inputs and dynamic NCHW inputs that can run at `AI_LIGHTWEIGHT_INPUT_SIZE`. If the model needs custom normalization, a non-mask output, or different garment label ids, a model-specific follow-up may still be needed.
 
 To verify a missing model path explicitly:
 
@@ -140,6 +145,29 @@ After a real ONNX model is available locally, the same script can check whether 
 ```powershell
 python scripts/verify_lightweight.py --model-path ai-server\models\garment.onnx
 ```
+
+To run the lightweight adapter against a real garment image and save a local debug mask:
+
+```powershell
+python scripts/verify_lightweight_image.py `
+  --model-path models\model.onnx `
+  --image-path test-assets\sample-garment.jpg `
+  --labels 4,5,6,7 `
+  --output debug\lightweight-mask.png
+```
+
+Use `--roi x,y,width,height` when you want to verify that postprocessing forces pixels outside the selected region to black:
+
+```powershell
+python scripts/verify_lightweight_image.py `
+  --model-path models\model.onnx `
+  --image-path test-assets\sample-garment.jpg `
+  --labels 4,5,6,7 `
+  --roi 100,80,600,900 `
+  --output debug\lightweight-mask.png
+```
+
+The script prints `success`, the segmenter message, mask size, foreground pixel count, and foreground ratio. If no clothing class is detected, it reports the labels used and suggests checking the label map or model normalization. Keep `test-assets/` and `debug/` files local; they are ignored by Git.
 
 If you start FastAPI with `AI_SEGMENTER=lightweight`, you can also point the script at the running server:
 
