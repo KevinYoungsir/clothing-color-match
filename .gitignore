@@ -10,6 +10,8 @@ ai-server/.venv/
 
 # AI model artifacts
 ai-server/models/
+ai-server/test-assets/
+ai-server/debug/
 *.onnx
 *.pt
 *.pth
