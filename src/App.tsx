@@ -1120,7 +1120,8 @@ export default function App() {
         options: {
           feather: 2
         },
-        roi: garmentRoiMap[sample.id] ?? null
+        roi: garmentRoiMap[sample.id] ?? null,
+        sampleId: sample.id
       },
       segmentationProviderType
     );
@@ -1215,7 +1216,8 @@ export default function App() {
           options: {
             feather: 2
           },
-          roi: garmentRoiMap[selectedSample.id] ?? null
+          roi: garmentRoiMap[selectedSample.id] ?? null,
+          sampleId: selectedSample.id
         },
         segmentationProviderType
       );

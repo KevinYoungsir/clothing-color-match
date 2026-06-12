@@ -131,7 +131,9 @@ $env:AI_MASK_ROI_PADDING_RATIO="0.08"
 
 `AI_LIGHTWEIGHT_KEEP_COMPONENTS` defaults to `2`, and `AI_LIGHTWEIGHT_MIN_COMPONENT_RATIO` defaults to `0.002`. The lightweight adapter removes tiny connected components after thresholding to reduce hanger, table, and background leakage. Increase `KEEP_COMPONENTS` only when a garment is split into multiple real parts.
 
-`AI_LIGHTWEIGHT_BODY_FILTER` defaults to enabled. It scores connected components by garment-body shape and position, then removes top-heavy, thin horizontal artifacts such as hangers or bars before the final component filtering step. `AI_LIGHTWEIGHT_BODY_KEEP_COMPONENTS` defaults to `2`, which is useful when pants legs are split into separate components.
+`AI_LIGHTWEIGHT_BODY_FILTER` defaults to enabled. It scores connected components by garment-body shape and position, then removes top-heavy, thin horizontal artifacts such as hangers or bars before the final component filtering step. General masks keep up to two components, while the target close-up candidate path keeps the highest-scoring garment body component to avoid isolated hanger, clip, and support responses.
+
+The target close-up candidate path evaluates thresholds `0.25,0.35,0.45,0.55,0.65,0.75` on the same ONNX probability output. It runs ONNX once, scores candidates at reduced resolution, and only builds the selected full-resolution mask. This lets close-up garment ROIs choose a tighter high-confidence mask without weakening the existing partial / over-coverage safety gates.
 
 When `AI_DEBUG_SAVE_MASKS` is enabled, the lightweight API writes the exact returned RGBA masks to role-specific debug files:
 
@@ -202,20 +204,22 @@ python scripts/inspect_label_masks.py `
   --model-path models\model.onnx `
   --image-path test-assets\sample-garment.jpg `
   --labels 4,5,6,7 `
-  --inspect-labels all `
+  --inspect-labels 4,5,6,7 `
+  --roi 100,80,600,900 `
   --output-dir debug\label-masks
 ```
 
-The script writes one `label-XX-final.png` per model label and also writes these combined-stage masks:
+The script limits inspection to the explicitly listed label ids, runs ONNX once, and writes `probability.png` plus `mask.png` under each `label-XX/` directory. It also writes these combined-stage masks:
 
 - `combined-raw-probability.png`
 - `combined-threshold.png`
 - `combined-body-filter.png`
 - `combined-components.png`
-- `combined-final.png`
-- `combined-postprocess.png`
+- `combined-final-crop.png`
+- `combined-postprocess-production.png`
+- `combined-postprocess-expanded-roi.png`
 
-It prints each stage's foreground ratio, bbox, alpha min / max / mean, border touch status, and connected component count. Use this before changing color transfer when the frontend targetMask contains only small isolated blocks.
+It prints each stage's foreground ratio, bbox ratios, alpha min / max / mean, border touch status, component diagnostics, selected candidate, and candidate scoring time. Environment overrides are cleared unless passed through script arguments, so repeated tests are reproducible. Use this before changing color transfer when the frontend targetMask contains only small isolated blocks.
 
 To compare the backend mask with the frontend decoded mask, enable frontend decoded-mask downloads in the browser console before running remote AI segmentation:
 

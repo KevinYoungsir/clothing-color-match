@@ -32,8 +32,8 @@ DEFAULT_MASK_BLUR = 4.0
 DEFAULT_KEEP_COMPONENTS = 2
 DEFAULT_MIN_COMPONENT_RATIO = 0.002
 DEFAULT_BODY_FILTER_KEEP_COMPONENTS = 2
-DEFAULT_TARGET_CANDIDATE_THRESHOLDS = (0.25, 0.35, 0.45, 0.55)
-DEFAULT_TARGET_CANDIDATE_GAMMAS = (1.0, 1.2, 1.4)
+DEFAULT_TARGET_CANDIDATE_THRESHOLDS = (0.25, 0.35, 0.45, 0.55, 0.65, 0.75)
+DEFAULT_TARGET_CANDIDATE_GAMMAS = (1.0,)
 DEFAULT_TARGET_CANDIDATE_SCORING_EDGE = 96
 MIN_SOFT_MASK_FOREGROUND_RATIO = 0.001
 MIN_UNPROMPTED_FOREGROUND_RATIO = 0.08
@@ -477,7 +477,11 @@ def _score_lower_garment_component(geometry: dict[str, Any]) -> float:
     return height_score * 2.0 + area_score * 1.4 + lower_center_score - aspect_penalty - top_penalty
 
 
-def _apply_lower_garment_body_filter(alpha: Any, np: Any) -> tuple[Any, dict[str, Any]]:
+def _apply_lower_garment_body_filter(
+    alpha: Any,
+    np: Any,
+    keep_components_override: int | None = None,
+) -> tuple[Any, dict[str, Any]]:
     if not _is_env_enabled("AI_LIGHTWEIGHT_BODY_FILTER", True):
         return alpha, {
             "enabled": False,
@@ -489,11 +493,15 @@ def _apply_lower_garment_body_filter(alpha: Any, np: Any) -> tuple[Any, dict[str
     binary_mask = alpha > 0
     components = _find_connected_components(binary_mask, np)
     height, width = alpha.shape
-    keep_components = _read_int_env(
-        "AI_LIGHTWEIGHT_BODY_KEEP_COMPONENTS",
-        DEFAULT_BODY_FILTER_KEEP_COMPONENTS,
-        1,
-        10,
+    keep_components = (
+        max(1, min(10, keep_components_override))
+        if keep_components_override is not None
+        else _read_int_env(
+            "AI_LIGHTWEIGHT_BODY_KEEP_COMPONENTS",
+            DEFAULT_BODY_FILTER_KEEP_COMPONENTS,
+            1,
+            10,
+        )
     )
     ranked_components = []
     removed_top_artifacts = 0
@@ -618,6 +626,7 @@ def build_soft_mask_stages(
     probability: Any,
     image_size: Tuple[int, int],
     np: Any,
+    body_keep_components_override: int | None = None,
     blur_override: float | None = None,
     include_component_stats: bool = False,
     gamma_override: float | None = None,
@@ -662,7 +671,11 @@ def build_soft_mask_stages(
         remapped_probability**gamma,
         0.0,
     )
-    body_alpha, body_filter_diagnostics = _apply_lower_garment_body_filter(normalized_alpha, np)
+    body_alpha, body_filter_diagnostics = _apply_lower_garment_body_filter(
+        normalized_alpha,
+        np,
+        keep_components_override=body_keep_components_override,
+    )
     alpha, connected_component_count, kept_component_count = _keep_largest_components(
         body_alpha,
         np,
@@ -859,6 +872,7 @@ def _build_target_closeup_candidate_stages(probability: Any, image_size: Tuple[i
                 scoring_probability,
                 scoring_size,
                 np,
+                body_keep_components_override=1,
                 blur_override=0.0,
                 include_component_stats=True,
                 gamma_override=gamma,
@@ -901,6 +915,7 @@ def _build_target_closeup_candidate_stages(probability: Any, image_size: Tuple[i
         probability,
         image_size,
         np,
+        body_keep_components_override=1,
         include_component_stats=False,
         gamma_override=selected["gamma"],
         threshold_override=selected["threshold"],
@@ -944,6 +959,11 @@ def _probability_to_soft_mask(
     )
     total_mask_build_ms = (perf_counter() - scoring_started_at) * 1000
     candidate_scoring_ms = float(stages.get("candidateScoringMs") or total_mask_build_ms)
+    probability_height, probability_width = np.asarray(probability).shape
+    stage_dimensions = {
+        "final": {"height": image_size[1], "width": image_size[0]},
+        "probability": {"height": probability_height, "width": probability_width},
+    }
     raw_summary = stages["rawSummary"]
     threshold_summary = stages["thresholdSummary"]
     body_filter_summary = stages["bodyFilterSummary"]
@@ -974,9 +994,12 @@ def _probability_to_soft_mask(
             "thresholdForegroundRatio": threshold_summary["foregroundRatio"],
             "bodyFilterDiagnostics": stages["bodyFilterDiagnostics"],
             "candidateScoringMs": candidate_scoring_ms,
+            "candidateScoringSize": stages.get("candidateScoringSize"),
             "totalMaskBuildMs": total_mask_build_ms,
             "candidateDiagnostics": stages.get("candidateDiagnostics"),
             "selectedCandidate": stages.get("selectedCandidate"),
+            "selectedReason": stages.get("selectedReason"),
+            "stageDimensions": stage_dimensions,
         }
         raise OnnxSegmentationError(
             f"模型输出服装概率过低，max={stages['maxProbability']:.3f}，threshold={stages['threshold']:.3f}"
@@ -1006,9 +1029,12 @@ def _probability_to_soft_mask(
             "thresholdForegroundRatio": threshold_summary["foregroundRatio"],
             "bodyFilterDiagnostics": stages["bodyFilterDiagnostics"],
             "candidateScoringMs": candidate_scoring_ms,
+            "candidateScoringSize": stages.get("candidateScoringSize"),
             "totalMaskBuildMs": total_mask_build_ms,
             "candidateDiagnostics": stages.get("candidateDiagnostics"),
             "selectedCandidate": stages.get("selectedCandidate"),
+            "selectedReason": stages.get("selectedReason"),
+            "stageDimensions": stage_dimensions,
         }
         raise OnnxSegmentationError(
             f"模型输出服装区域过小，foregroundRatio={components_summary['foregroundRatio']:.6f}，threshold={stages['threshold']:.3f}"
@@ -1037,9 +1063,12 @@ def _probability_to_soft_mask(
         "thresholdForegroundRatio": threshold_summary["foregroundRatio"],
         "bodyFilterDiagnostics": stages["bodyFilterDiagnostics"],
         "candidateScoringMs": candidate_scoring_ms,
+        "candidateScoringSize": stages.get("candidateScoringSize"),
         "totalMaskBuildMs": total_mask_build_ms,
         "candidateDiagnostics": stages.get("candidateDiagnostics"),
         "selectedCandidate": stages.get("selectedCandidate"),
+        "selectedReason": stages.get("selectedReason"),
+        "stageDimensions": stage_dimensions,
     }
 
     return stages["finalMask"]

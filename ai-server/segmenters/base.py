@@ -24,6 +24,7 @@ class SegmentResult:
     mask: Optional[str] = None
     confidence: Optional[float] = None
     quality: Optional[str] = None
+    diagnostics: Optional[Dict[str, Any]] = None
 
     def to_response(self) -> Dict[str, object]:
         response: Dict[str, object] = {
@@ -39,6 +40,9 @@ class SegmentResult:
 
         if self.quality is not None:
             response["quality"] = self.quality
+
+        if self.diagnostics is not None:
+            response["diagnostics"] = self.diagnostics
 
         return response
 

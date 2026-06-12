@@ -14,6 +14,7 @@ export type SegmentationInput = {
 };
 
 export type SegmentationResult = AutoMaskResult & {
+  diagnostics?: RemoteAiDiagnostics;
   provider: SegmentationProviderType;
   requestedProvider: SegmentationProviderType;
   fallbackProvider?: SegmentationProviderType;
@@ -27,10 +28,30 @@ const defaultRemoteAiTimeoutMs = 60000;
 
 type RemoteAiSegmentationResponse = {
   confidence?: number;
+  diagnostics?: RemoteAiDiagnostics;
   mask?: string;
   message?: string;
   quality?: string;
   success?: boolean;
+};
+
+type RemoteAiDiagnostics = {
+  bboxAreaRatio?: number;
+  bboxWidthRatio?: number;
+  roiHeightRatio?: number;
+  roiLikelyTooWide?: boolean;
+  roiTouchesImageBorder?: boolean;
+  roiWidthRatio?: number;
+  selectedCandidate?: {
+    bboxAreaRatio?: number;
+    foregroundRatio?: number;
+    rejectedReason?: string | null;
+    score?: number;
+    threshold?: number;
+    touchesBorder?: boolean;
+    widthRatio?: number;
+  };
+  touchesRoiLeftOrRight?: boolean;
 };
 
 function clamp(value: number, min: number, max: number) {
@@ -199,7 +220,8 @@ function downloadDecodedRemoteMaskDebug(mask: ImageData, input: SegmentationInpu
 
 function getRemoteTargetMaskQualityIssue(
   maskStats: ReturnType<typeof getMaskStats>,
-  input: SegmentationInput
+  input: SegmentationInput,
+  diagnostics?: RemoteAiDiagnostics
 ) {
   const boundingBox = maskStats.boundingBox;
 
@@ -229,10 +251,32 @@ function getRemoteTargetMaskQualityIssue(
   }
 
   if (roi) {
+    const roiWidthRatio = roi.width / Math.max(1, input.imageData.width);
     const bboxWidthRatio = boundingBox.width / Math.max(1, roi.width);
     const bboxHeightRatio = boundingBox.height / Math.max(1, roi.height);
     const bboxAreaRatio =
       (boundingBox.width * boundingBox.height) / Math.max(1, roi.width * roi.height);
+    const selectedCandidate = diagnostics?.selectedCandidate;
+    const selectedTouchesBorder = Boolean(selectedCandidate?.touchesBorder);
+    const selectedWidthRatio = Number(selectedCandidate?.widthRatio ?? 0);
+    const selectedAreaRatio = Number(selectedCandidate?.bboxAreaRatio ?? 0);
+    const roiLikelyTooWide =
+      diagnostics?.roiLikelyTooWide === true || roiWidthRatio > 0.92;
+    const unreliableRoiMessage =
+      "框选区域过宽或 AI 蒙版不可靠，请缩小框选范围，只框住需要校色的裤面主体，或手动编辑校色范围。";
+
+    if (
+      (roiLikelyTooWide &&
+        (maskStats.touchesRoiBoundary ||
+          selectedTouchesBorder ||
+          selectedWidthRatio > 0.8 ||
+          selectedAreaRatio > 0.65)) ||
+      (selectedTouchesBorder && selectedWidthRatio > 0.8) ||
+      selectedAreaRatio > 0.65 ||
+      (maskStats.touchesRoiBoundary && bboxWidthRatio > 0.8)
+    ) {
+      return unreliableRoiMessage;
+    }
 
     if (
       bboxAreaRatio >= 0.8 ||
@@ -321,6 +365,10 @@ async function fetchRemoteAiMask(
   }
 
   try {
+    if (debugRole === "target" && !sampleId?.trim()) {
+      throw new Error("远程 AI 样品图标识缺失，不会使用不可靠蒙版继续校色。");
+    }
+
     const response = await fetch(endpoint, {
       body: await createRemoteRequestBody(input),
       method: "POST",
@@ -336,7 +384,9 @@ async function fetchRemoteAiMask(
     if (
       payload.success &&
       payload.quality &&
-      ["partial", "low_coverage", "low_confidence", "over_coverage"].includes(payload.quality)
+      ["partial", "low_coverage", "low_confidence", "over_coverage", "roi_too_wide"].includes(
+        payload.quality
+      )
     ) {
       throw new Error(`${payload.message || "远程 AI 分割服务返回低质量 mask"} quality=${payload.quality}`);
     }
@@ -359,7 +409,9 @@ async function fetchRemoteAiMask(
     downloadDecodedRemoteMaskDebug(mask, input);
     const maskStats = getMaskStats(mask, input.roi ?? input.promptBox ?? null);
     const remoteTargetQualityIssue =
-      debugRole === "target" ? getRemoteTargetMaskQualityIssue(maskStats, input) : null;
+      debugRole === "target"
+        ? getRemoteTargetMaskQualityIssue(maskStats, input, payload.diagnostics)
+        : null;
 
     if (
       import.meta.env.DEV &&
@@ -419,6 +471,7 @@ async function fetchRemoteAiMask(
 
     return {
       confidence,
+      diagnostics: payload.diagnostics,
       mask,
       message: [remoteMessage, boundaryWarning].filter(Boolean).join(" "),
       provider: "remote-ai",
@@ -531,7 +584,7 @@ export async function runGarmentSegmentation(
     const errorMessage = error instanceof Error ? error.message : "";
     const isRemoteMaskQualityFailure =
       input.debugRole === "target" &&
-      /仅识别到局部服装区域|未覆盖服饰主体|识别结果异常|识别范围过大|mask bbox|未能可靠识别服装主体|partial|low_coverage|low_confidence|over_coverage/.test(
+      /仅识别到局部服装区域|未覆盖服饰主体|识别结果异常|识别范围过大|框选区域过宽|蒙版不可靠|样品图标识缺失|mask bbox|未能可靠识别服装主体|partial|low_coverage|low_confidence|over_coverage|roi_too_wide/.test(
         errorMessage
       );
 

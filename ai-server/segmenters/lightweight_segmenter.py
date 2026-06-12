@@ -259,12 +259,114 @@ def _quality_failure(quality: str, message: str) -> dict[str, str]:
     }
 
 
+def _get_target_roi_diagnostics(
+    mask,
+    roi,
+    prompt_box,
+    debug_role: str | None,
+    mask_diagnostics: dict[str, object] | None,
+) -> dict[str, object]:
+    alpha_mask = mask.convert("L")
+    image_width, image_height = alpha_mask.size
+    normalized_roi = normalize_roi(roi or prompt_box, image_width, image_height)
+    selected_candidate = (
+        (mask_diagnostics or {}).get("selectedCandidate")
+        if isinstance(mask_diagnostics, dict)
+        else None
+    )
+
+    if not isinstance(selected_candidate, dict):
+        selected_candidate = {}
+
+    bbox = alpha_mask.getbbox()
+    bbox_payload = None
+    bbox_width_ratio = 0.0
+    bbox_height_ratio = 0.0
+    bbox_area_ratio = 0.0
+    touches_roi_left_or_right = False
+    histogram = alpha_mask.histogram()
+    foreground_pixels = sum(histogram[1:])
+    strong_foreground_pixels = sum(histogram[129:])
+
+    if bbox:
+        left, top, right, bottom = bbox
+        bbox_width = right - left
+        bbox_height = bottom - top
+        expected_width = normalized_roi["width"] if normalized_roi else image_width
+        expected_height = normalized_roi["height"] if normalized_roi else image_height
+        bbox_payload = {
+            "height": bbox_height,
+            "width": bbox_width,
+            "x": left,
+            "y": top,
+        }
+        bbox_width_ratio = bbox_width / max(1, expected_width)
+        bbox_height_ratio = bbox_height / max(1, expected_height)
+        bbox_area_ratio = (bbox_width * bbox_height) / max(1, expected_width * expected_height)
+
+        if normalized_roi:
+            roi_right = normalized_roi["x"] + normalized_roi["width"]
+            touches_roi_left_or_right = (
+                left <= normalized_roi["x"] + 2
+                or right >= roi_right - 2
+            )
+
+    roi_width_ratio = (
+        normalized_roi["width"] / max(1, image_width)
+        if normalized_roi
+        else 0.0
+    )
+    roi_height_ratio = (
+        normalized_roi["height"] / max(1, image_height)
+        if normalized_roi
+        else 0.0
+    )
+    roi_touches_image_border = bool(
+        normalized_roi
+        and (
+            normalized_roi["x"] <= 1
+            or normalized_roi["y"] <= 1
+            or normalized_roi["x"] + normalized_roi["width"] >= image_width - 1
+            or normalized_roi["y"] + normalized_roi["height"] >= image_height - 1
+        )
+    )
+
+    return {
+        "bbox": bbox_payload,
+        "bboxAreaRatio": bbox_area_ratio,
+        "bboxHeightRatio": bbox_height_ratio,
+        "bboxWidthRatio": bbox_width_ratio,
+        "foregroundRatio": foreground_pixels / max(1, image_width * image_height),
+        "role": debug_role,
+        "roi": normalized_roi,
+        "roiHeightRatio": roi_height_ratio,
+        "roiLikelyTooWide": roi_width_ratio > 0.92,
+        "roiTouchesImageBorder": roi_touches_image_border,
+        "roiWidthRatio": roi_width_ratio,
+        "selectedCandidate": {
+            "bboxAreaRatio": float(selected_candidate.get("bboxAreaRatio") or 0.0),
+            "foregroundRatio": float(selected_candidate.get("foregroundRatio") or 0.0),
+            "rejectedReason": selected_candidate.get("rejectedReason"),
+            "score": selected_candidate.get("score"),
+            "threshold": selected_candidate.get("threshold"),
+            "touchesBorder": bool(selected_candidate.get("touchesBorder")),
+            "widthRatio": float(selected_candidate.get("widthRatio") or 0.0),
+        },
+        "strongForegroundRatio": strong_foreground_pixels / max(1, image_width * image_height),
+        "strongWithinForegroundRatio": (
+            strong_foreground_pixels / max(1, foreground_pixels)
+        ),
+        "touchesRoiLeftOrRight": touches_roi_left_or_right,
+    }
+
+
 def _mask_quality_error(
     mask,
     roi,
     prompt_box,
     debug_role: str | None = None,
     mask_diagnostics: dict[str, object] | None = None,
+    roi_diagnostics: dict[str, object] | None = None,
 ) -> dict[str, str] | None:
     alpha_mask = mask.convert("L")
     histogram = alpha_mask.histogram()
@@ -322,6 +424,46 @@ def _mask_quality_error(
     selected_area_ratio = float(selected_candidate.get("bboxAreaRatio") or 0.0)
     selected_foreground_ratio = float(selected_candidate.get("foregroundRatio") or 0.0)
     selected_touches_border = bool(selected_candidate.get("touchesBorder"))
+    target_roi_diagnostics = roi_diagnostics or {}
+    roi_width_ratio = float(target_roi_diagnostics.get("roiWidthRatio") or 0.0)
+    roi_likely_too_wide = bool(target_roi_diagnostics.get("roiLikelyTooWide"))
+    touches_roi_left_or_right = bool(
+        target_roi_diagnostics.get("touchesRoiLeftOrRight")
+    )
+
+    if is_target_with_roi and roi_likely_too_wide and (
+        selected_touches_border
+        or selected_width_ratio > 0.80
+        or selected_area_ratio > 0.65
+        or touches_roi_left_or_right
+    ):
+        return _quality_failure(
+            "roi_too_wide",
+            (
+                "框选区域过宽，可能包含背景或道具，请缩小框选范围，只框住需要校色的裤面主体。"
+                f" roiWidthRatio={roi_width_ratio:.4f}"
+                f" selectedWidthRatio={selected_width_ratio:.4f}"
+                f" selectedBboxAreaRatio={selected_area_ratio:.4f}"
+                f" touchesBorder={selected_touches_border}"
+            ),
+        )
+
+    if is_target_with_roi and (
+        (selected_touches_border and selected_width_ratio > 0.80)
+        or selected_area_ratio > 0.65
+        or (touches_roi_left_or_right and bbox_width_ratio > 0.80)
+    ):
+        return _quality_failure(
+            "low_confidence",
+            (
+                "远程 AI 蒙版不可靠，请缩小框选范围，只框住需要校色的裤面主体，"
+                "或手动编辑校色范围。"
+                f" bboxWidthRatio={bbox_width_ratio:.4f}"
+                f" selectedWidthRatio={selected_width_ratio:.4f}"
+                f" selectedBboxAreaRatio={selected_area_ratio:.4f}"
+                f" touchesBorder={selected_touches_border}"
+            ),
+        )
 
     if is_target_with_roi and (
         full_bbox_width_ratio >= 0.95
@@ -563,7 +705,7 @@ class LightweightSegmenter(BaseSegmenter):
                 raw_mask,
                 image_width,
                 image_height,
-                roi=inference_roi,
+                roi=requested_roi,
             )
         else:
             mask = postprocess_mask(
@@ -577,12 +719,21 @@ class LightweightSegmenter(BaseSegmenter):
         extra_debug["postprocessMs"] = postprocess_ms
         print(f"[ai-server] postprocess ms={postprocess_ms:.2f}", flush=True)
         record_postprocess_diagnostics(mask)
+        roi_diagnostics = _get_target_roi_diagnostics(
+            mask,
+            segment_input.roi,
+            segment_input.prompt_box,
+            segment_input.debug_role,
+            mask_diagnostics,
+        )
+        extra_debug["roiDiagnostics"] = roi_diagnostics
         quality_error = _mask_quality_error(
             mask,
             segment_input.roi,
             segment_input.prompt_box,
             segment_input.debug_role,
             mask_diagnostics,
+            roi_diagnostics,
         )
 
         if quality_error:
@@ -599,6 +750,7 @@ class LightweightSegmenter(BaseSegmenter):
                 flush=True,
             )
             return SegmentResult(
+                diagnostics=roi_diagnostics,
                 message=quality_error["message"],
                 quality=quality_error["quality"],
                 success=False,
@@ -612,6 +764,7 @@ class LightweightSegmenter(BaseSegmenter):
 
         return SegmentResult(
             confidence=0.6,
+            diagnostics=roi_diagnostics,
             mask=encode_mask_png(mask),
             message="lightweight ONNX mask",
             success=True,
