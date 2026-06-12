@@ -96,7 +96,7 @@ The `lightweight` segmenter is a generic ONNX adapter, not a model-specific impl
 - Resizes the image to the configured input size and converts it to an RGB float32 tensor in the 0-1 range.
 - Runs `session.run`.
 - Tries to parse the first output as a binary / two-class mask, or as multi-class logits `[1, num_labels, height, width]`.
-- Converts multi-class logits to a garment mask with `argmax` and `AI_LIGHTWEIGHT_CLOTHING_LABELS`.
+- Converts multi-class logits to a soft garment mask with softmax probabilities and `AI_LIGHTWEIGHT_CLOTHING_LABELS`.
 - Returns `success: false` if the model output shape cannot be safely interpreted.
 - Sends successful masks through `segmenters/postprocess.py`, so `roi` / `promptBox` can still force pixels outside the selected region to black.
 
@@ -114,9 +114,35 @@ $env:AI_SEGMENTER="lightweight"
 $env:AI_LIGHTWEIGHT_MODEL_PATH="ai-server\models\garment.onnx"
 $env:AI_LIGHTWEIGHT_INPUT_SIZE="512"
 $env:AI_LIGHTWEIGHT_CLOTHING_LABELS="4,5,6,7"
+$env:AI_LIGHTWEIGHT_MASK_THRESHOLD="0.55"
+$env:AI_LIGHTWEIGHT_MASK_GAMMA="1.4"
+$env:AI_LIGHTWEIGHT_MASK_BLUR="4"
+$env:AI_LIGHTWEIGHT_KEEP_COMPONENTS="2"
+$env:AI_LIGHTWEIGHT_MIN_COMPONENT_RATIO="0.002"
+$env:AI_LIGHTWEIGHT_BODY_FILTER="1"
+$env:AI_LIGHTWEIGHT_BODY_KEEP_COMPONENTS="2"
+$env:AI_DEBUG_SAVE_MASKS="1"
+$env:AI_MASK_ROI_PADDING_RATIO="0.08"
 ```
 
 `AI_LIGHTWEIGHT_INPUT_SIZE` defaults to `512` when the model uses dynamic height / width. `AI_LIGHTWEIGHT_CLOTHING_LABELS` defaults to `4,5,6,7`; adjust it to match the selected model label map. If the adapter returns "未检测到服装类别", the model may be working but the clothing label ids likely need to be changed.
+
+`AI_LIGHTWEIGHT_MASK_THRESHOLD` defaults to `0.55`; probabilities below the threshold are forced to transparent so low-confidence background pixels do not participate in color transfer. Pixels above the threshold are remapped with `AI_LIGHTWEIGHT_MASK_GAMMA` (default `1.4`) before becoming alpha, which suppresses weak edges while keeping strong garment pixels. `AI_LIGHTWEIGHT_MASK_BLUR` defaults to `4` pixels and only softens the final alpha edge.
+
+`AI_LIGHTWEIGHT_KEEP_COMPONENTS` defaults to `2`, and `AI_LIGHTWEIGHT_MIN_COMPONENT_RATIO` defaults to `0.002`. The lightweight adapter removes tiny connected components after thresholding to reduce hanger, table, and background leakage. Increase `KEEP_COMPONENTS` only when a garment is split into multiple real parts.
+
+`AI_LIGHTWEIGHT_BODY_FILTER` defaults to enabled. It scores connected components by garment-body shape and position, then removes top-heavy, thin horizontal artifacts such as hangers or bars before the final component filtering step. `AI_LIGHTWEIGHT_BODY_KEEP_COMPONENTS` defaults to `2`, which is useful when pants legs are split into separate components.
+
+When `AI_DEBUG_SAVE_MASKS` is enabled, the lightweight API writes the exact returned RGBA masks to role-specific debug files:
+
+- `debug/api-return-reference-mask.png`
+- `debug/api-return-reference-mask.json`
+- `debug/api-return-target-mask-<sampleId>.png`
+- `debug/api-return-target-mask-<sampleId>.json`
+
+The JSON sidecar records role, sample id, input image size, output mask size, labels, foreground ratio, bbox, message, and success. These files are ignored by Git and are intended for comparing the backend response against frontend decoded masks.
+
+`AI_MASK_ROI_PADDING_RATIO` defaults to `0.08` for real lightweight / SAM2 segmenters. It applies a soft edge inside the user ROI; pixels outside the ROI remain black. Keep ROI boxes loose enough to include garment edges.
 
 The current preprocessing uses RGB and 0-1 normalization. If a selected model requires ImageNet mean / std normalization or a different class map, add that as a model-specific follow-up instead of guessing silently.
 
@@ -168,6 +194,56 @@ python scripts/verify_lightweight_image.py `
 ```
 
 The script prints `success`, the segmenter message, mask size, foreground pixel count, and foreground ratio. If no clothing class is detected, it reports the labels used and suggests checking the label map or model normalization. Keep `test-assets/` and `debug/` files local; they are ignored by Git.
+
+To diagnose a real model label map and the mask postprocessing stages, export per-label masks:
+
+```powershell
+python scripts/inspect_label_masks.py `
+  --model-path models\model.onnx `
+  --image-path test-assets\sample-garment.jpg `
+  --labels 4,5,6,7 `
+  --inspect-labels all `
+  --output-dir debug\label-masks
+```
+
+The script writes one `label-XX-final.png` per model label and also writes these combined-stage masks:
+
+- `combined-raw-probability.png`
+- `combined-threshold.png`
+- `combined-body-filter.png`
+- `combined-components.png`
+- `combined-final.png`
+- `combined-postprocess.png`
+
+It prints each stage's foreground ratio, bbox, alpha min / max / mean, border touch status, and connected component count. Use this before changing color transfer when the frontend targetMask contains only small isolated blocks.
+
+To compare the backend mask with the frontend decoded mask, enable frontend decoded-mask downloads in the browser console before running remote AI segmentation:
+
+```js
+localStorage.setItem("debugRemoteMaskDownload", "1")
+```
+
+Then retry remote AI recognition. The browser downloads `decoded-target-mask-<sampleId>.png` or `decoded-reference-mask.png`. Compare target masks with `debug/api-return-target-mask-<sampleId>.png`, the right-panel `target-mask-debug-<sampleId>.png`, and `applied-mask-debug-<sampleId>.png`. Compare reference masks separately with `debug/api-return-reference-mask.png` and `reference-mask-debug.png`. Disable it after diagnosis:
+
+```js
+localStorage.removeItem("debugRemoteMaskDownload")
+```
+
+For diagnosis only, you can temporarily relax mask filtering to see whether the garment body is being removed by thresholding or component filtering:
+
+```powershell
+python scripts/inspect_label_masks.py `
+  --model-path models\model.onnx `
+  --image-path test-assets\sample-garment.jpg `
+  --labels 4,5,6,7 `
+  --threshold 0.30 `
+  --gamma 1.0 `
+  --keep-components 10 `
+  --min-component-ratio 0 `
+  --output-dir debug\label-masks-relaxed
+```
+
+If pants are not represented by labels `4,5,6,7`, update `AI_LIGHTWEIGHT_CLOTHING_LABELS` to the label ids whose per-label masks cover the garment body. Do not commit anything under `debug/`, `test-assets/`, or `models/`.
 
 If you start FastAPI with `AI_SEGMENTER=lightweight`, you can also point the script at the running server:
 
@@ -221,9 +297,14 @@ Create or update the frontend `.env` file:
 
 ```txt
 VITE_AI_SEGMENTATION_API=http://localhost:8000/segment-garment
+VITE_AI_SEGMENTATION_TIMEOUT_MS=60000
 ```
 
 Restart the Vite dev server after changing `.env`.
+
+The timeout is configurable because the first lightweight ONNX request may need
+to load the model before inference. The backend caches the ONNX Runtime session
+by model path and file metadata, so later requests reuse the loaded session.
 
 ## Local Verification
 
@@ -281,6 +362,9 @@ Form fields:
 - `roi`: optional JSON string, for example `{"x":100,"y":80,"width":320,"height":480}`.
 - `promptBox`: optional JSON string. The mock server treats it like `roi`.
 - `promptPoints`: optional JSON string, reserved for future prompt-based segmentation.
+- `debugRole`: optional debug role, `reference` or `target`.
+- `sampleId`: optional frontend sample id used only for target debug filenames.
+- `imageWidth` / `imageHeight`: optional original image size used for debug sidecar metadata.
 
 Success response:
 
