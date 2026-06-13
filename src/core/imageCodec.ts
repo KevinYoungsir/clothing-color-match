@@ -28,6 +28,32 @@ function dataUrlToBlob(dataUrl: string) {
   return new Blob([bytes], { type: mimeType });
 }
 
+function isEncodedImageBytes(bytes: Uint8Array) {
+  const isPng =
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a;
+  const isJpeg = bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  const isWebp =
+    bytes.length >= 12 &&
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x45 &&
+    bytes[10] === 0x42 &&
+    bytes[11] === 0x50;
+
+  return isPng || isJpeg || isWebp;
+}
+
 export function imageDataToPngBase64(imageData: ImageData) {
   const canvas = document.createElement("canvas");
   const context = getCanvasContext(canvas);
@@ -59,11 +85,81 @@ export function imageDataToPngBlob(imageData: ImageData) {
   });
 }
 
+export function decodeMaskImageDataToAlphaMask(sourceImageData: ImageData) {
+  const mask = new ImageData(sourceImageData.width, sourceImageData.height);
+  let minAlpha = 255;
+  let maxAlpha = 0;
+  let minLuminance = 255;
+  let maxLuminance = 0;
+
+  for (let index = 0; index < sourceImageData.data.length; index += 4) {
+    const alpha = sourceImageData.data[index + 3];
+    const luminance = Math.max(
+      sourceImageData.data[index],
+      sourceImageData.data[index + 1],
+      sourceImageData.data[index + 2]
+    );
+
+    minAlpha = Math.min(minAlpha, alpha);
+    maxAlpha = Math.max(maxAlpha, alpha);
+    minLuminance = Math.min(minLuminance, luminance);
+    maxLuminance = Math.max(maxLuminance, luminance);
+  }
+
+  const hasLuminanceSignal = maxLuminance - minLuminance > 2;
+  const hasAlphaSignal = maxAlpha - minAlpha > 2;
+  const shouldUseLuminance = hasLuminanceSignal && (!hasAlphaSignal || minAlpha > 252);
+
+  for (let index = 0; index < sourceImageData.data.length; index += 4) {
+    const alpha = sourceImageData.data[index + 3];
+    const luminance = Math.max(
+      sourceImageData.data[index],
+      sourceImageData.data[index + 1],
+      sourceImageData.data[index + 2]
+    );
+
+    mask.data[index + 3] = shouldUseLuminance ? luminance : hasAlphaSignal ? alpha : 0;
+  }
+
+  return mask;
+}
+
+function createWhiteAlphaMaskImageData(mask: ImageData) {
+  const output = new ImageData(mask.width, mask.height);
+
+  for (let index = 0; index < mask.data.length; index += 4) {
+    output.data[index] = 255;
+    output.data[index + 1] = 255;
+    output.data[index + 2] = 255;
+    output.data[index + 3] = mask.data[index + 3];
+  }
+
+  return output;
+}
+
+export function downloadAlphaMaskDebugPng(mask: ImageData, fileName: string) {
+  const canvas = document.createElement("canvas");
+  const context = getCanvasContext(canvas);
+  const link = document.createElement("a");
+
+  canvas.width = mask.width;
+  canvas.height = mask.height;
+  context.putImageData(createWhiteAlphaMaskImageData(mask), 0, 0);
+
+  link.href = canvas.toDataURL("image/png");
+  link.download = fileName;
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
 function createAlphaMaskFromBytes(bytes: Uint8Array, width: number, height: number) {
   const pixelCount = width * height;
-  const mask = new ImageData(width, height);
 
   if (bytes.length === pixelCount) {
+    const mask = new ImageData(width, height);
+
     for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
       mask.data[pixelIndex * 4 + 3] = bytes[pixelIndex];
     }
@@ -72,18 +168,29 @@ function createAlphaMaskFromBytes(bytes: Uint8Array, width: number, height: numb
   }
 
   if (bytes.length === pixelCount * 4) {
-    for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
-      const sourceIndex = pixelIndex * 4;
-      const alpha = bytes[sourceIndex + 3];
-      const luminance = Math.max(bytes[sourceIndex], bytes[sourceIndex + 1], bytes[sourceIndex + 2]);
+    const sourceImageData = new ImageData(new Uint8ClampedArray(bytes), width, height);
 
-      mask.data[sourceIndex + 3] = alpha > 0 ? alpha : luminance;
-    }
-
-    return mask;
+    return decodeMaskImageDataToAlphaMask(sourceImageData);
   }
 
   return null;
+}
+
+function resizeAlphaMask(mask: ImageData, width: number, height: number) {
+  const sourceCanvas = document.createElement("canvas");
+  const sourceContext = getCanvasContext(sourceCanvas);
+  const targetCanvas = document.createElement("canvas");
+  const targetContext = getCanvasContext(targetCanvas);
+
+  sourceCanvas.width = mask.width;
+  sourceCanvas.height = mask.height;
+  sourceContext.putImageData(mask, 0, 0);
+  targetCanvas.width = width;
+  targetCanvas.height = height;
+  targetContext.clearRect(0, 0, width, height);
+  targetContext.drawImage(sourceCanvas, 0, 0, width, height);
+
+  return decodeMaskImageDataToAlphaMask(targetContext.getImageData(0, 0, width, height));
 }
 
 async function decodeImageElementFromBase64(base64Value: string) {
@@ -116,44 +223,40 @@ export async function maskBase64ToImageData(maskValue: string, width: number, he
     bytes[index] = binary.charCodeAt(index);
   }
 
-  const rawMask = createAlphaMaskFromBytes(bytes, width, height);
+  const isEncodedImage = isEncodedImageBytes(bytes) || maskValue.trim().startsWith("data:image/");
+  const rawMask = isEncodedImage ? null : createAlphaMaskFromBytes(bytes, width, height);
 
   if (rawMask) {
     return rawMask;
   }
 
   const decodedImage = await decodeImageElementFromBase64(maskValue);
+  const decodedWidth = decodedImage.naturalWidth || decodedImage.width;
+  const decodedHeight = decodedImage.naturalHeight || decodedImage.height;
   const canvas = document.createElement("canvas");
   const context = getCanvasContext(canvas);
 
-  canvas.width = width;
-  canvas.height = height;
-  context.clearRect(0, 0, width, height);
-  context.drawImage(decodedImage, 0, 0, width, height);
+  canvas.width = decodedWidth;
+  canvas.height = decodedHeight;
+  context.clearRect(0, 0, decodedWidth, decodedHeight);
+  context.drawImage(decodedImage, 0, 0, decodedWidth, decodedHeight);
 
-  const decodedImageData = context.getImageData(0, 0, width, height);
-  const mask = new ImageData(width, height);
-  let maxLuminance = 0;
+  const decodedMask = decodeMaskImageDataToAlphaMask(context.getImageData(0, 0, decodedWidth, decodedHeight));
 
-  for (let index = 0; index < decodedImageData.data.length; index += 4) {
-    maxLuminance = Math.max(
-      maxLuminance,
-      decodedImageData.data[index],
-      decodedImageData.data[index + 1],
-      decodedImageData.data[index + 2]
-    );
+  if (decodedWidth !== width || decodedHeight !== height) {
+    console.warn("[mask-debug] dimension mismatch", {
+      decodedMask: {
+        height: decodedHeight,
+        width: decodedWidth
+      },
+      expectedImage: {
+        height,
+        width
+      }
+    });
+
+    return resizeAlphaMask(decodedMask, width, height);
   }
 
-  for (let index = 0; index < decodedImageData.data.length; index += 4) {
-    const sourceAlpha = decodedImageData.data[index + 3];
-    const luminance = Math.max(
-      decodedImageData.data[index],
-      decodedImageData.data[index + 1],
-      decodedImageData.data[index + 2]
-    );
-
-    mask.data[index + 3] = maxLuminance > 0 ? luminance : sourceAlpha;
-  }
-
-  return mask;
+  return decodedMask;
 }

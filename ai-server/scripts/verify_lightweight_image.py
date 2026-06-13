@@ -16,6 +16,7 @@ if str(AI_SERVER_ROOT) not in sys.path:
 
 from segmenters.base import SegmentInput
 from segmenters.lightweight_segmenter import LightweightSegmenter
+from segmenters.onnx_utils import get_last_mask_diagnostics, get_last_onnx_timings
 from segmenters.postprocess import normalize_roi
 
 
@@ -73,18 +74,101 @@ def decode_mask(mask_base64: str) -> Image.Image:
     return mask.convert("L")
 
 
-def foreground_summary(mask: Image.Image) -> tuple[int, float]:
+def mask_summary(mask: Image.Image, component_count: Optional[int] = None) -> dict:
     pixels = mask.load()
     foreground_count = 0
     total_count = mask.width * mask.height
+    alpha_sum = 0
+    min_alpha = 255
+    max_alpha = 0
+    min_x = mask.width
+    min_y = mask.height
+    max_x = -1
+    max_y = -1
 
     for y in range(mask.height):
         for x in range(mask.width):
-            if pixels[x, y] > 0:
+            alpha = pixels[x, y]
+            alpha_sum += alpha
+            min_alpha = min(min_alpha, alpha)
+            max_alpha = max(max_alpha, alpha)
+
+            if alpha > 0:
                 foreground_count += 1
+                min_x = min(min_x, x)
+                min_y = min(min_y, y)
+                max_x = max(max_x, x)
+                max_y = max(max_y, y)
 
     ratio = foreground_count / total_count if total_count else 0.0
-    return foreground_count, ratio
+    bbox = (
+        None
+        if foreground_count == 0
+        else {
+            "height": max_y - min_y + 1,
+            "width": max_x - min_x + 1,
+            "x": min_x,
+            "y": min_y,
+        }
+    )
+
+    return {
+        "alphaMax": max_alpha,
+        "alphaMean": alpha_sum / total_count if total_count else 0.0,
+        "alphaMin": min_alpha,
+        "bbox": bbox,
+        "bboxAreaRatio": (
+            (bbox["width"] * bbox["height"]) / total_count
+            if bbox and total_count
+            else 0.0
+        ),
+        "bboxHeightRatio": bbox["height"] / mask.height if bbox and mask.height else 0.0,
+        "bboxWidthRatio": bbox["width"] / mask.width if bbox and mask.width else 0.0,
+        "componentCount": component_count,
+        "foregroundPixels": foreground_count,
+        "foregroundRatio": ratio,
+        "touchesBorder": bool(
+            bbox
+            and (
+                bbox["x"] <= 0
+                or bbox["y"] <= 0
+                or bbox["x"] + bbox["width"] >= mask.width
+                or bbox["y"] + bbox["height"] >= mask.height
+            )
+        ),
+    }
+
+
+def print_stage_summary(
+    stage_name: str,
+    summary: Optional[dict],
+    image_width: int,
+    image_height: int,
+) -> None:
+    if not summary:
+        print(f"{stage_name}: unavailable")
+        return
+
+    bbox = summary.get("bbox")
+    width = max(1, image_width)
+    height = max(1, image_height)
+    bbox_width_ratio = bbox["width"] / width if bbox else None
+    bbox_height_ratio = bbox["height"] / height if bbox else None
+    bbox_area_ratio = (
+        (bbox["width"] * bbox["height"]) / (width * height)
+        if bbox
+        else None
+    )
+
+    print(
+        f"{stage_name}: foregroundRatio={float(summary.get('foregroundRatio') or 0.0):.6f}, "
+        f"bbox={bbox}, bboxWidthRatio={bbox_width_ratio}, "
+        f"bboxHeightRatio={bbox_height_ratio}, bboxAreaRatio={bbox_area_ratio}, "
+        f"alphaMin={summary.get('minAlpha')}, alphaMax={summary.get('maxAlpha')}, "
+        f"alphaMean={float(summary.get('meanAlpha') or 0.0):.3f}, "
+        f"componentCount={summary.get('componentCount')}, "
+        f"touchesBorder={summary.get('touchesBorder')}"
+    )
 
 
 def assert_roi_limited(mask: Image.Image, roi: dict) -> None:
@@ -133,6 +217,57 @@ def parse_args() -> argparse.Namespace:
         help="Optional AI_LIGHTWEIGHT_INPUT_SIZE override, for example 512.",
     )
     parser.add_argument(
+        "--threshold",
+        default=None,
+        help="Optional AI_LIGHTWEIGHT_MASK_THRESHOLD override.",
+    )
+    parser.add_argument(
+        "--gamma",
+        default=None,
+        help="Optional AI_LIGHTWEIGHT_MASK_GAMMA override.",
+    )
+    parser.add_argument(
+        "--blur",
+        default=None,
+        help="Optional AI_LIGHTWEIGHT_MASK_BLUR override.",
+    )
+    parser.add_argument(
+        "--keep-components",
+        default=None,
+        help="Optional AI_LIGHTWEIGHT_KEEP_COMPONENTS override.",
+    )
+    parser.add_argument(
+        "--min-component-ratio",
+        default=None,
+        help="Optional AI_LIGHTWEIGHT_MIN_COMPONENT_RATIO override.",
+    )
+    parser.add_argument(
+        "--body-keep-components",
+        default=None,
+        help="Optional AI_LIGHTWEIGHT_BODY_KEEP_COMPONENTS override.",
+    )
+    parser.add_argument(
+        "--target-thresholds",
+        default=None,
+        help="Optional AI_LIGHTWEIGHT_TARGET_CANDIDATE_THRESHOLDS override.",
+    )
+    parser.add_argument(
+        "--target-gammas",
+        default=None,
+        help="Optional AI_LIGHTWEIGHT_TARGET_CANDIDATE_GAMMAS override.",
+    )
+    parser.add_argument(
+        "--target-normalization",
+        default="imagenet",
+        choices=("imagenet", "zero-one"),
+        help="Target preprocessing normalization. Default: imagenet.",
+    )
+    parser.add_argument(
+        "--sample-id",
+        default="verify-lightweight",
+        help="Sample id used by target diagnostics.",
+    )
+    parser.add_argument(
         "--require-success",
         action="store_true",
         help="Exit non-zero when the segmenter returns success:false.",
@@ -166,13 +301,74 @@ def main() -> int:
         temporary_env("AI_LIGHTWEIGHT_MODEL_PATH", str(model_path)),
         temporary_env("AI_LIGHTWEIGHT_CLOTHING_LABELS", args.labels),
         temporary_env("AI_LIGHTWEIGHT_INPUT_SIZE", args.input_size),
+        temporary_env("AI_LIGHTWEIGHT_MASK_THRESHOLD", args.threshold),
+        temporary_env("AI_LIGHTWEIGHT_MASK_GAMMA", args.gamma),
+        temporary_env("AI_LIGHTWEIGHT_MASK_BLUR", args.blur),
+        temporary_env("AI_LIGHTWEIGHT_KEEP_COMPONENTS", args.keep_components),
+        temporary_env("AI_LIGHTWEIGHT_MIN_COMPONENT_RATIO", args.min_component_ratio),
+        temporary_env("AI_LIGHTWEIGHT_BODY_KEEP_COMPONENTS", args.body_keep_components),
+        temporary_env(
+            "AI_LIGHTWEIGHT_TARGET_CANDIDATE_THRESHOLDS",
+            args.target_thresholds,
+        ),
+        temporary_env("AI_LIGHTWEIGHT_TARGET_CANDIDATE_GAMMAS", args.target_gammas),
+        temporary_env(
+            "AI_LIGHTWEIGHT_TARGET_NORMALIZATION",
+            args.target_normalization,
+        ),
+        temporary_env("AI_DEBUG_SAVE_MASKS", "0"),
     ):
-        result = LightweightSegmenter().segment(SegmentInput(image=image, roi=roi))
+        result = LightweightSegmenter().segment(
+            SegmentInput(
+                debug_role="target",
+                image=image,
+                image_height=image.height,
+                image_width=image.width,
+                prompt_box=roi,
+                roi=roi,
+                sample_id=args.sample_id,
+            )
+        )
+        mask_diagnostics = get_last_mask_diagnostics()
+        onnx_timings = get_last_onnx_timings()
 
     print(f"success: {result.success}")
     print(f"message: {result.message}")
+    print(f"quality: {result.quality or 'none'}")
     print(f"labels: {args.labels}")
     print(f"image size: {image.width} x {image.height}")
+    print(f"onnxRunCount: {onnx_timings.get('onnxRunCount', 'n/a')}")
+    print(f"sessionCacheHit: {onnx_timings.get('sessionCacheHit', 'n/a')}")
+    print(f"normalization: {onnx_timings.get('normalization', 'n/a')}")
+    print(f"candidateScoringMs: {mask_diagnostics.get('candidateScoringMs', 'n/a')}")
+    print(f"semanticCalibration: {mask_diagnostics.get('semanticCalibration')}")
+    print(f"selectedCandidate: {mask_diagnostics.get('selectedCandidate')}")
+    print(f"selectedReason: {mask_diagnostics.get('selectedReason')}")
+    stage_diagnostics = mask_diagnostics.get("stageDiagnostics") or {}
+    stage_dimensions = mask_diagnostics.get("stageDimensions") or {}
+    probability_dimensions = stage_dimensions.get("probability") or {}
+    final_dimensions = stage_dimensions.get("final") or {}
+
+    for stage_name in (
+        "rawProbability",
+        "threshold",
+        "bodyFilter",
+        "components",
+        "final",
+    ):
+        stage_summary = stage_diagnostics.get(stage_name)
+        dimensions = final_dimensions if stage_name == "final" else probability_dimensions
+        stage_width = int(dimensions.get("width") or image.width)
+        stage_height = int(dimensions.get("height") or image.height)
+        print_stage_summary(stage_name, stage_summary, stage_width, stage_height)
+
+    print_stage_summary(
+        "postprocess",
+        mask_diagnostics.get("postprocess"),
+        image.width,
+        image.height,
+    )
+    print(f"bodyFilterDiagnostics: {mask_diagnostics.get('bodyFilterDiagnostics')}")
 
     if not result.success:
         print("mask size: none")
@@ -209,10 +405,12 @@ def main() -> int:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     mask.save(output_path, format="PNG")
 
-    foreground_count, foreground_ratio = foreground_summary(mask)
+    summary = mask_summary(
+        mask,
+        int(mask_diagnostics.get("connectedComponentCount") or 0),
+    )
     print(f"mask size: {mask.width} x {mask.height}")
-    print(f"foreground pixels: {foreground_count}")
-    print(f"foreground ratio: {foreground_ratio:.6f}")
+    print(f"mask summary: {summary}")
     print(f"output: {output_path}")
 
     if roi is None:
