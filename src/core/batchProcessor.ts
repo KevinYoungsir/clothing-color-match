@@ -264,12 +264,14 @@ export async function processBatchImages({
       } else if (!shouldUseCurrentMask) {
         const autoMaskResult = await runGarmentSegmentation(
           {
+            debugRole: "target",
             imageData: originalImageData,
             mode: "garment",
             options: {
               feather: autoMaskFeather
             },
-            roi: garmentRoi
+            roi: garmentRoi,
+            sampleId: sample.id
           },
           autoParams.segmentationProviderType
         );
