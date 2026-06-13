@@ -1,5 +1,7 @@
 import argparse
+import json
 import os
+import re
 import sys
 from contextlib import contextmanager
 from pathlib import Path
@@ -55,6 +57,13 @@ def temporary_env(name: str, value: Optional[str]) -> Iterator[None]:
 def resolve_path(value: str) -> Path:
     path = Path(value).expanduser()
     return path if path.is_absolute() else AI_SERVER_ROOT / path
+
+
+def sanitize_case_id(value: str) -> str:
+    sanitized = re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip()).strip("-")
+    if not sanitized:
+        raise ValueError("--case-id must contain at least one safe filename character.")
+    return sanitized
 
 
 def parse_roi(value: Optional[str]) -> Optional[dict[str, int]]:
@@ -135,8 +144,26 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output-dir",
-        default=DEFAULT_OUTPUT_DIR,
-        help=f"Debug output directory. Default: {DEFAULT_OUTPUT_DIR}.",
+        default=None,
+        help=(
+            "Debug output directory. Defaults to debug/multi-garment/<case-id> "
+            f"when --case-id is set, otherwise {DEFAULT_OUTPUT_DIR}."
+        ),
+    )
+    parser.add_argument(
+        "--case-id",
+        default=None,
+        help="Stable evaluation case id, for example trouser_hanger_002.",
+    )
+    parser.add_argument(
+        "--category",
+        default=None,
+        help="Garment category metadata, for example trouser or jacket.",
+    )
+    parser.add_argument(
+        "--image-type",
+        default=None,
+        help="Image type metadata, for example whitebg, hanger, or modelhalf.",
     )
     parser.add_argument("--roi", default=None, help="Optional ROI as x,y,width,height.")
     parser.add_argument("--input-size", default="512")
@@ -161,7 +188,19 @@ def main() -> int:
     args = parse_args()
     model_path = resolve_path(args.model_path)
     image_path = resolve_path(args.image_path)
-    output_dir = resolve_path(args.output_dir)
+    try:
+        safe_case_id = sanitize_case_id(args.case_id) if args.case_id else None
+    except ValueError as exc:
+        print(f"Invalid case id: {exc}", file=sys.stderr)
+        return 1
+    output_dir = resolve_path(
+        args.output_dir
+        or (
+            f"debug/multi-garment/{safe_case_id}"
+            if safe_case_id
+            else DEFAULT_OUTPUT_DIR
+        )
+    )
 
     if not model_path.exists():
         print(f"Model file does not exist: {model_path}", file=sys.stderr)
@@ -240,6 +279,9 @@ def main() -> int:
             return 1
 
         print(f"image: {image_path}")
+        print(f"case id: {args.case_id or 'none'}")
+        print(f"category: {args.category or 'none'}")
+        print(f"image type: {args.image_type or 'none'}")
         print(f"source size: {source_image.width} x {source_image.height}")
         print(f"requested ROI: {normalized_roi}")
         print(f"inference ROI: {inference_roi}")
@@ -251,6 +293,7 @@ def main() -> int:
         print(f"inspect labels: {inspect_labels}")
         print("onnxRunCount: 1")
 
+        label_summaries = []
         for label in inspect_labels:
             probability, _count, _layout = get_multiclass_label_probability(
                 output,
@@ -270,6 +313,13 @@ def main() -> int:
                 f"label {label}: "
                 f"{format_summary(stages['finalSummary'], probability_width, probability_height)}, "
                 f"selected={stages.get('selectedCandidate')}"
+            )
+            label_summaries.append(
+                {
+                    "label": label,
+                    "selectedCandidate": stages.get("selectedCandidate"),
+                    "summary": stages["finalSummary"],
+                }
             )
 
         (
@@ -384,6 +434,39 @@ def main() -> int:
         print(f"semanticCalibration: {semantic_diagnostics}")
         print(f"candidateScoringMs: {combined_stages.get('candidateScoringMs')}")
         print(f"selectedCandidate: {combined_stages.get('selectedCandidate')}")
+        inspection_summary = {
+            "candidateScoringMs": combined_stages.get("candidateScoringMs"),
+            "caseId": args.case_id,
+            "category": args.category,
+            "combinedLabels": combined_labels,
+            "imageType": args.image_type,
+            "inspectLabels": inspect_labels,
+            "labelSummaries": label_summaries,
+            "normalization": args.normalization,
+            "onnxRunCount": 1,
+            "outputDirectory": str(output_dir),
+            "postprocessSummary": postprocess_summary,
+            "requestedRoi": normalized_roi,
+            "selectedCandidate": combined_stages.get("selectedCandidate"),
+            "stageSummaries": {
+                "bodyFilter": combined_stages["bodyFilterSummary"],
+                "components": combined_stages["componentsSummary"],
+                "final": combined_stages["finalSummary"],
+                "rawProbability": combined_stages["rawSummary"],
+                "threshold": combined_stages["thresholdSummary"],
+            },
+        }
+        (output_dir / "inspection-summary.json").write_text(
+            json.dumps(
+                inspection_summary,
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        print(f"inspection summary: {output_dir / 'inspection-summary.json'}")
 
     return 0
 

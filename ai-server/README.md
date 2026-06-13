@@ -227,6 +227,61 @@ The script limits inspection to the explicitly listed label ids, runs ONNX once,
 
 It prints each stage's foreground ratio, bbox ratios, alpha min / max / mean, border touch status, component diagnostics, selected candidate, and candidate scoring time. Environment overrides are cleared unless passed through script arguments, so repeated tests are reproducible. Use this before changing color transfer when the frontend targetMask contains only small isolated blocks.
 
+## Multi-garment Mask Evaluation
+
+The repeatable test matrix and manual acceptance checklist are documented in
+[`docs/multi-garment-mask-evaluation.md`](../docs/multi-garment-mask-evaluation.md).
+This evaluation records when a category may safely return `success` and when it
+must stop with `partial`, `low_confidence`, `over_coverage`, or
+`roi_too_wide`. It does not weaken the existing mask quality gates.
+
+Keep local test images under an ignored directory such as `test-assets/`. Use a
+stable case id that includes the garment category, image type, and sequence
+number.
+
+Run the production lightweight target path and save a structured result:
+
+```powershell
+python scripts/verify_lightweight_image.py `
+  --model-path models\model.onnx `
+  --image-path test-assets\trouser_whitebg_001.jpg `
+  --case-id trouser_whitebg_001 `
+  --category trouser `
+  --image-type whitebg `
+  --expected-result success `
+  --summary-json debug\multi-garment\trouser_whitebg_001\summary.json `
+  --output debug\multi-garment\trouser_whitebg_001\mask.png
+```
+
+The summary JSON includes the actual result, quality, foreground ratio, bbox,
+ROI diagnostics, selected candidate, candidate scoring time, ONNX run count,
+and a comparison suggestion against the expected result. The suggestion is
+diagnostic only; the mask still requires visual review.
+
+Use the label inspector when a mask includes a hanger, metal bar, clip,
+background, skin, or an inner layer:
+
+```powershell
+python scripts/inspect_label_masks.py `
+  --model-path models\model.onnx `
+  --image-path test-assets\trouser_hanger_002.jpg `
+  --case-id trouser_hanger_002 `
+  --category trouser `
+  --image-type hanger `
+  --labels 4,5,6,7 `
+  --inspect-labels 4,5,6,7
+```
+
+With `--case-id`, the default output directory is
+`debug/multi-garment/<case-id>/`. It contains per-label masks, combined stage
+PNGs, and `inspection-summary.json`. ONNX still runs once.
+
+Review the mask PNGs together with the JSON summaries. A `success` result
+passes only when the garment body is covered continuously without background
+or prop contamination and without visible color blocks. A difficult case that
+returns the expected safe failure is also a passing evaluation. Unreliable
+masks must not enter color transfer.
+
 To compare the backend mask with the frontend decoded mask, enable frontend decoded-mask downloads in the browser console before running remote AI segmentation:
 
 ```js
