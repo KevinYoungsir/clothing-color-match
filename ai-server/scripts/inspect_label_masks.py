@@ -20,7 +20,9 @@ from segmenters.onnx_utils import (
     MissingOnnxDependency,
     OnnxSegmentationError,
     _build_target_closeup_candidate_stages,
+    _calibrate_target_semantic_probability,
     get_multiclass_label_probability,
+    get_multiclass_label_probability_and_support,
     image_mask_summary,
     parse_clothing_labels_value,
     run_onnx_first_output,
@@ -138,6 +140,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--roi", default=None, help="Optional ROI as x,y,width,height.")
     parser.add_argument("--input-size", default="512")
+    parser.add_argument(
+        "--normalization",
+        default="imagenet",
+        choices=("imagenet", "zero-one"),
+        help="Target preprocessing normalization. Default: imagenet.",
+    )
     parser.add_argument("--threshold", default=None)
     parser.add_argument("--gamma", default=None)
     parser.add_argument("--blur", default=None)
@@ -215,7 +223,11 @@ def main() -> int:
         temporary_env("AI_DEBUG_SAVE_MASKS", "0"),
     ):
         try:
-            output, np, input_spec = run_onnx_first_output(model_path, inference_image)
+            output, np, input_spec = run_onnx_first_output(
+                model_path,
+                inference_image,
+                normalization=args.normalization,
+            )
             _probe, label_count, logits_layout = get_multiclass_label_probability(
                 output,
                 (0,),
@@ -234,6 +246,7 @@ def main() -> int:
         print(f"inference size: {inference_image.width} x {inference_image.height}")
         print(f"input: {input_spec.name}, {input_spec.layout}, {input_spec.width} x {input_spec.height}")
         print(f"logits layout: {logits_layout}")
+        print(f"normalization: {args.normalization}")
         print(f"label count: {label_count}")
         print(f"inspect labels: {inspect_labels}")
         print("onnxRunCount: 1")
@@ -259,9 +272,19 @@ def main() -> int:
                 f"selected={stages.get('selectedCandidate')}"
             )
 
-        combined_probability, _count, _layout = get_multiclass_label_probability(
+        (
+            combined_probability,
+            semantic_support,
+            _count,
+            _layout,
+        ) = get_multiclass_label_probability_and_support(
             output,
             combined_labels,
+            np,
+        )
+        combined_probability, semantic_diagnostics = _calibrate_target_semantic_probability(
+            combined_probability,
+            semantic_support,
             np,
         )
         combined_stages = _build_target_closeup_candidate_stages(
@@ -358,6 +381,7 @@ def main() -> int:
             f"{format_summary(expanded_roi_summary, source_image.width, source_image.height)}"
         )
         print(f"bodyFilterDiagnostics: {combined_stages.get('bodyFilterDiagnostics')}")
+        print(f"semanticCalibration: {semantic_diagnostics}")
         print(f"candidateScoringMs: {combined_stages.get('candidateScoringMs')}")
         print(f"selectedCandidate: {combined_stages.get('selectedCandidate')}")
 

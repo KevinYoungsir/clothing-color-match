@@ -121,6 +121,8 @@ $env:AI_LIGHTWEIGHT_KEEP_COMPONENTS="2"
 $env:AI_LIGHTWEIGHT_MIN_COMPONENT_RATIO="0.002"
 $env:AI_LIGHTWEIGHT_BODY_FILTER="1"
 $env:AI_LIGHTWEIGHT_BODY_KEEP_COMPONENTS="2"
+$env:AI_LIGHTWEIGHT_TARGET_NORMALIZATION="imagenet"
+$env:AI_LIGHTWEIGHT_TARGET_SEMANTIC_FLOOR="0.55"
 $env:AI_DEBUG_SAVE_MASKS="1"
 $env:AI_MASK_ROI_PADDING_RATIO="0.08"
 ```
@@ -133,7 +135,11 @@ $env:AI_MASK_ROI_PADDING_RATIO="0.08"
 
 `AI_LIGHTWEIGHT_BODY_FILTER` defaults to enabled. It scores connected components by garment-body shape and position, then removes top-heavy, thin horizontal artifacts such as hangers or bars before the final component filtering step. General masks keep up to two components, while the target close-up candidate path keeps the highest-scoring garment body component to avoid isolated hanger, clip, and support responses.
 
-The target close-up candidate path evaluates thresholds `0.25,0.35,0.45,0.55,0.65,0.75` on the same ONNX probability output. It runs ONNX once, scores candidates at reduced resolution, and only builds the selected full-resolution mask. This lets close-up garment ROIs choose a tighter high-confidence mask without weakening the existing partial / over-coverage safety gates.
+The target close-up candidate path uses ImageNet mean / std normalization by default, while the existing reference path remains unchanged. Set `AI_LIGHTWEIGHT_TARGET_NORMALIZATION=zero-one` only for a model that explicitly expects unnormalized 0-1 RGB.
+
+For multiclass logits, target masks also use the model's argmax clothing-class support to calibrate the soft probability map. `AI_LIGHTWEIGHT_TARGET_SEMANTIC_FLOOR` defaults to `0.55`, and non-clothing responses are reduced by `AI_LIGHTWEIGHT_TARGET_BACKGROUND_SCALE` (default `0.25`). This fills low-confidence gaps inside a garment prediction without converting the ROI rectangle into a mask.
+
+The target close-up candidate path evaluates thresholds `0.25,0.35,0.45,0.55,0.65,0.70,0.75,0.78,0.82,0.86` on the same ONNX probability output. It runs ONNX once, scores candidates at reduced resolution, and only builds the selected full-resolution mask. Candidate acceptance uses the same width, border-contact, and bbox-area limits as the final target safety gate, so a lower-threshold over-coverage candidate cannot hide a safer high-threshold candidate.
 
 When `AI_DEBUG_SAVE_MASKS` is enabled, the lightweight API writes the exact returned RGBA masks to role-specific debug files:
 
@@ -146,7 +152,7 @@ The JSON sidecar records role, sample id, input image size, output mask size, la
 
 `AI_MASK_ROI_PADDING_RATIO` defaults to `0.08` for real lightweight / SAM2 segmenters. It applies a soft edge inside the user ROI; pixels outside the ROI remain black. Keep ROI boxes loose enough to include garment edges.
 
-The current preprocessing uses RGB and 0-1 normalization. If a selected model requires ImageNet mean / std normalization or a different class map, add that as a model-specific follow-up instead of guessing silently.
+The reference path keeps the existing RGB 0-1 preprocessing. The close-up target path defaults to ImageNet mean / std normalization because the current `pixel_values` SegFormer-style model expects it. Both modes remain configurable for another model.
 
 You can verify the lightweight safety paths without a real model:
 

@@ -32,9 +32,23 @@ DEFAULT_MASK_BLUR = 4.0
 DEFAULT_KEEP_COMPONENTS = 2
 DEFAULT_MIN_COMPONENT_RATIO = 0.002
 DEFAULT_BODY_FILTER_KEEP_COMPONENTS = 2
-DEFAULT_TARGET_CANDIDATE_THRESHOLDS = (0.25, 0.35, 0.45, 0.55, 0.65, 0.75)
+DEFAULT_TARGET_CANDIDATE_THRESHOLDS = (
+    0.25,
+    0.35,
+    0.45,
+    0.55,
+    0.65,
+    0.70,
+    0.75,
+    0.78,
+    0.82,
+    0.86,
+)
 DEFAULT_TARGET_CANDIDATE_GAMMAS = (1.0,)
 DEFAULT_TARGET_CANDIDATE_SCORING_EDGE = 96
+DEFAULT_TARGET_NORMALIZATION = "imagenet"
+DEFAULT_TARGET_SEMANTIC_FLOOR = 0.55
+DEFAULT_TARGET_BACKGROUND_SCALE = 0.25
 MIN_SOFT_MASK_FOREGROUND_RATIO = 0.001
 MIN_UNPROMPTED_FOREGROUND_RATIO = 0.08
 LAST_MASK_DIAGNOSTICS: dict[str, Any] = {}
@@ -271,9 +285,25 @@ def get_input_spec(session: Any) -> OnnxInputSpec:
     raise OnnxSegmentationError(f"无法识别输入通道位置，当前输入形状为 {shape}")
 
 
-def preprocess_image(image: Image.Image, spec: OnnxInputSpec, np: Any) -> Any:
+def preprocess_image(
+    image: Image.Image,
+    spec: OnnxInputSpec,
+    np: Any,
+    normalization: str = "zero-one",
+) -> Any:
     resized = image.convert("RGB").resize((spec.width, spec.height), Image.Resampling.BILINEAR)
     tensor = np.asarray(resized, dtype=np.float32) / 255.0
+
+    normalized_mode = normalization.strip().lower()
+    if normalized_mode == "imagenet":
+        mean = np.asarray([0.485, 0.456, 0.406], dtype=np.float32)
+        std = np.asarray([0.229, 0.224, 0.225], dtype=np.float32)
+        tensor = (tensor - mean) / std
+    elif normalized_mode not in {"0-1", "none", "zero-one"}:
+        raise OnnxSegmentationError(
+            "AI lightweight normalization 必须是 zero-one 或 imagenet，"
+            f"当前值为 {normalization!r}"
+        )
 
     if spec.layout == "NCHW":
         tensor = np.transpose(tensor, (2, 0, 1))
@@ -285,7 +315,12 @@ def _sigmoid(array: Any, np: Any) -> Any:
     return 1.0 / (1.0 + np.exp(-array))
 
 
-def _get_label_probability(class_logits: Any, labels: Tuple[int, ...], axis: int, np: Any) -> Any:
+def _get_label_probability_and_support(
+    class_logits: Any,
+    labels: Tuple[int, ...],
+    axis: int,
+    np: Any,
+) -> tuple[Any, Any]:
     stable_logits = class_logits.astype(np.float32)
     max_logits = np.max(stable_logits, axis=axis, keepdims=True)
     exp_logits = np.exp(stable_logits - max_logits)
@@ -293,10 +328,60 @@ def _get_label_probability(class_logits: Any, labels: Tuple[int, ...], axis: int
 
     if axis == 0:
         numerator = np.sum(exp_logits[list(labels), :, :], axis=0)
+        predicted_labels = np.argmax(stable_logits, axis=0)
     else:
         numerator = np.sum(exp_logits[:, :, list(labels)], axis=2)
+        predicted_labels = np.argmax(stable_logits, axis=2)
 
-    return np.clip(numerator / denominator, 0.0, 1.0)
+    probability = np.clip(numerator / denominator, 0.0, 1.0)
+    semantic_support = np.isin(predicted_labels, labels)
+    return probability, semantic_support
+
+
+def _get_label_probability(class_logits: Any, labels: Tuple[int, ...], axis: int, np: Any) -> Any:
+    probability, _semantic_support = _get_label_probability_and_support(
+        class_logits,
+        labels,
+        axis,
+        np,
+    )
+    return probability
+
+
+def _calibrate_target_semantic_probability(
+    probability: Any,
+    semantic_support: Any,
+    np: Any,
+) -> tuple[Any, dict[str, float]]:
+    semantic_floor = _read_float_env(
+        "AI_LIGHTWEIGHT_TARGET_SEMANTIC_FLOOR",
+        DEFAULT_TARGET_SEMANTIC_FLOOR,
+        0.0,
+        0.99,
+    )
+    background_scale = _read_float_env(
+        "AI_LIGHTWEIGHT_TARGET_BACKGROUND_SCALE",
+        DEFAULT_TARGET_BACKGROUND_SCALE,
+        0.0,
+        1.0,
+    )
+    probability_array = np.asarray(probability, dtype=np.float32)
+    support_array = np.asarray(semantic_support, dtype=bool)
+    supported_probability = np.maximum(
+        probability_array,
+        semantic_floor + (1.0 - semantic_floor) * probability_array,
+    )
+    calibrated = np.where(
+        support_array,
+        supported_probability,
+        probability_array * background_scale,
+    )
+
+    return np.clip(calibrated, 0.0, 1.0), {
+        "backgroundScale": background_scale,
+        "semanticFloor": semantic_floor,
+        "semanticSupportRatio": float(np.mean(support_array)),
+    }
 
 
 def _find_connected_components(binary_mask: Any, np: Any) -> list[dict[str, Any]]:
@@ -740,7 +825,9 @@ def _score_target_closeup_candidate(stages: dict[str, Any], image_size: Tuple[in
 
     ratios = _get_bbox_ratios(summary, image_size)
     foreground_ratio = float(summary["foregroundRatio"])
-    component_count = summary.get("componentCount") or 0
+    fill_ratio = foreground_ratio / max(1e-6, ratios["areaRatio"])
+    component_count = stages.get("connectedComponentCount") or 0
+    threshold = float(stages.get("threshold") or 0.0)
 
     if foreground_ratio <= 0:
         return -1_000.0
@@ -763,11 +850,22 @@ def _score_target_closeup_candidate(stages: dict[str, Any], image_size: Tuple[in
         + min(0.75, ratios["areaRatio"]) * 3.2
         + min(0.85, ratios["widthRatio"]) * 0.9
         + min(0.90, ratios["heightRatio"]) * 0.9
+        + min(1.0, fill_ratio) * 0.8
         + float(summary["meanAlpha"]) / 255.0 * 0.5
     )
 
     if summary.get("touchesBorder"):
         score -= 0.75
+
+    if threshold <= 0.25:
+        score -= 1.0
+    elif threshold <= 0.35:
+        score -= 0.65
+    elif threshold <= 0.45:
+        score -= 0.25
+
+    if summary.get("touchesBorder") and ratios["heightRatio"] >= 0.95:
+        score -= 1.25
 
     if ratios["widthRatio"] >= 0.90:
         score -= (ratios["widthRatio"] - 0.90) * 8.0
@@ -784,11 +882,13 @@ def _target_candidate_rejection_reason(
     summary: dict[str, Any],
     ratios: dict[str, float],
     score: float,
+    threshold: float,
 ) -> str | None:
     if not summary.get("bbox"):
         return "empty_mask"
 
     foreground_ratio = float(summary.get("foregroundRatio") or 0.0)
+    fill_ratio = foreground_ratio / max(1e-6, ratios["areaRatio"])
 
     if foreground_ratio <= 0:
         return "empty_mask"
@@ -804,6 +904,22 @@ def _target_candidate_rejection_reason(
 
     if ratios["heightRatio"] < 0.22:
         return "bbox_too_short"
+
+    if fill_ratio < 0.42:
+        return "sparse_candidate"
+
+    if (
+        threshold <= 0.35
+        and summary.get("touchesBorder")
+        and ratios["heightRatio"] >= 0.95
+    ):
+        return "low_threshold_boundary_contact"
+
+    if summary.get("touchesBorder") and ratios["widthRatio"] > 0.80:
+        return "roi_boundary_contact"
+
+    if ratios["areaRatio"] > 0.65:
+        return "bbox_area_too_large"
 
     if summary.get("touchesBorder") and ratios["widthRatio"] >= 0.96:
         return "roi_over_coverage"
@@ -874,22 +990,30 @@ def _build_target_closeup_candidate_stages(probability: Any, image_size: Tuple[i
                 np,
                 body_keep_components_override=1,
                 blur_override=0.0,
-                include_component_stats=True,
+                include_component_stats=False,
                 gamma_override=gamma,
                 threshold_override=threshold,
             )
             score = _score_target_closeup_candidate(stages, scoring_size)
             summary = stages["finalSummary"]
             ratios = _get_bbox_ratios(summary, scoring_size)
-            rejected_reason = _target_candidate_rejection_reason(summary, ratios, score)
+            rejected_reason = _target_candidate_rejection_reason(
+                summary,
+                ratios,
+                score,
+                threshold,
+            )
 
             candidates.append(
                 {
                     "accepted": rejected_reason is None,
                     "bbox": summary.get("bbox"),
                     "bboxAreaRatio": ratios["areaRatio"],
-                    "componentCount": summary.get("componentCount"),
+                    "componentCount": stages.get("connectedComponentCount"),
                     "foregroundRatio": summary["foregroundRatio"],
+                    "fillRatio": (
+                        summary["foregroundRatio"] / max(1e-6, ratios["areaRatio"])
+                    ),
                     "gamma": gamma,
                     "heightRatio": ratios["heightRatio"],
                     "maxAlpha": summary["maxAlpha"],
@@ -1106,12 +1230,60 @@ def get_multiclass_label_probability(output: Any, labels: Tuple[int, ...], np: A
     raise OnnxSegmentationError(f"输出不是多类别 logits，当前输出形状为 {logits.shape}")
 
 
+def get_multiclass_label_probability_and_support(
+    output: Any,
+    labels: Tuple[int, ...],
+    np: Any,
+) -> tuple[Any, Any, int, str]:
+    logits = np.asarray(output)
+
+    if logits.ndim != 4:
+        raise OnnxSegmentationError(f"多类别 logits 必须是 4D 输出，当前输出形状为 {logits.shape}")
+
+    if logits.shape[0] != 1:
+        raise OnnxSegmentationError(f"暂只支持 batch size 1 输出，当前输出形状为 {logits.shape}")
+
+    if logits.shape[1] > 2:
+        label_count = logits.shape[1]
+        invalid_labels = [label for label in labels if label < 0 or label >= label_count]
+        if invalid_labels:
+            raise OnnxSegmentationError(
+                f"标签超出模型类别范围：{invalid_labels}，模型类别数为 {label_count}"
+            )
+        probability, semantic_support = _get_label_probability_and_support(
+            logits[0],
+            labels,
+            0,
+            np,
+        )
+        return probability, semantic_support, label_count, "NCHW"
+
+    if logits.shape[3] > 2:
+        label_count = logits.shape[3]
+        invalid_labels = [label for label in labels if label < 0 or label >= label_count]
+        if invalid_labels:
+            raise OnnxSegmentationError(
+                f"标签超出模型类别范围：{invalid_labels}，模型类别数为 {label_count}"
+            )
+        probability, semantic_support = _get_label_probability_and_support(
+            logits[0],
+            labels,
+            2,
+            np,
+        )
+        return probability, semantic_support, label_count, "NHWC"
+
+    raise OnnxSegmentationError(f"输出不是多类别 logits，当前输出形状为 {logits.shape}")
+
+
 def _parse_multiclass_logits(
     output: Any,
     image_size: Tuple[int, int],
     np: Any,
     use_target_candidates: bool = False,
 ) -> Image.Image | None:
+    global LAST_MASK_DIAGNOSTICS
+
     logits = np.asarray(output)
 
     if logits.ndim != 4:
@@ -1120,9 +1292,52 @@ def _parse_multiclass_logits(
     if not (logits.shape[1] > 2 or logits.shape[3] > 2):
         return None
 
-    probability, _label_count, _layout = get_multiclass_label_probability(output, _read_clothing_labels(), np)
+    labels = _read_clothing_labels()
+    if logits.shape[1] > 2:
+        label_count = logits.shape[1]
+        invalid_labels = [label for label in labels if label < 0 or label >= label_count]
+        if invalid_labels:
+            raise OnnxSegmentationError(
+                "AI_LIGHTWEIGHT_CLOTHING_LABELS 包含超出模型类别数的标签："
+                f"{invalid_labels}，模型类别数为 {label_count}"
+            )
+        probability, semantic_support = _get_label_probability_and_support(
+            logits[0],
+            labels,
+            0,
+            np,
+        )
+    else:
+        label_count = logits.shape[3]
+        invalid_labels = [label for label in labels if label < 0 or label >= label_count]
+        if invalid_labels:
+            raise OnnxSegmentationError(
+                "AI_LIGHTWEIGHT_CLOTHING_LABELS 包含超出模型类别数的标签："
+                f"{invalid_labels}，模型类别数为 {label_count}"
+            )
+        probability, semantic_support = _get_label_probability_and_support(
+            logits[0],
+            labels,
+            2,
+            np,
+        )
 
-    return _probability_to_soft_mask(probability, image_size, np, use_target_candidates)
+    semantic_diagnostics = None
+    if use_target_candidates:
+        probability, semantic_diagnostics = _calibrate_target_semantic_probability(
+            probability,
+            semantic_support,
+            np,
+        )
+
+    mask = _probability_to_soft_mask(probability, image_size, np, use_target_candidates)
+    if semantic_diagnostics:
+        LAST_MASK_DIAGNOSTICS = {
+            **LAST_MASK_DIAGNOSTICS,
+            "semanticCalibration": semantic_diagnostics,
+        }
+
+    return mask
 
 
 def _squeeze_mask_output(output: Any, np: Any) -> Any:
@@ -1203,7 +1418,11 @@ def parse_mask_output(
     return pil_mask
 
 
-def run_onnx_first_output(model_path: Path, image: Image.Image) -> tuple[Any, Any, OnnxInputSpec]:
+def run_onnx_first_output(
+    model_path: Path,
+    image: Image.Image,
+    normalization: str = "zero-one",
+) -> tuple[Any, Any, OnnxInputSpec]:
     global LAST_ONNX_TIMINGS
 
     total_started_at = perf_counter()
@@ -1214,7 +1433,7 @@ def run_onnx_first_output(model_path: Path, image: Image.Image) -> tuple[Any, An
     session_diagnostics = dict(LAST_ONNX_TIMINGS)
     preprocess_started_at = perf_counter()
     input_spec = get_input_spec(session)
-    input_tensor = preprocess_image(image, input_spec, np)
+    input_tensor = preprocess_image(image, input_spec, np, normalization)
     preprocess_ms = (perf_counter() - preprocess_started_at) * 1000
 
     try:
@@ -1231,6 +1450,7 @@ def run_onnx_first_output(model_path: Path, image: Image.Image) -> tuple[Any, An
         **session_diagnostics,
         "dependenciesMs": dependencies_ms,
         "inferenceMs": inference_ms,
+        "normalization": normalization,
         "onnxRunCount": 1,
         "preprocessMs": preprocess_ms,
         "totalOnnxPipelineMs": (perf_counter() - total_started_at) * 1000,
@@ -1257,6 +1477,18 @@ def run_onnx_segmentation(
     image: Image.Image,
     use_target_candidates: bool = False,
 ) -> Image.Image:
-    output, np, _input_spec = run_onnx_first_output(model_path, image)
+    normalization = (
+        getenv(
+            "AI_LIGHTWEIGHT_TARGET_NORMALIZATION",
+            DEFAULT_TARGET_NORMALIZATION,
+        )
+        if use_target_candidates
+        else getenv("AI_LIGHTWEIGHT_NORMALIZATION", "zero-one")
+    )
+    output, np, _input_spec = run_onnx_first_output(
+        model_path,
+        image,
+        normalization=normalization,
+    )
 
     return parse_mask_output(output, image.size, np, use_target_candidates)

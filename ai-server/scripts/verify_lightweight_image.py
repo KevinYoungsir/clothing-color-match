@@ -257,6 +257,12 @@ def parse_args() -> argparse.Namespace:
         help="Optional AI_LIGHTWEIGHT_TARGET_CANDIDATE_GAMMAS override.",
     )
     parser.add_argument(
+        "--target-normalization",
+        default="imagenet",
+        choices=("imagenet", "zero-one"),
+        help="Target preprocessing normalization. Default: imagenet.",
+    )
+    parser.add_argument(
         "--sample-id",
         default="verify-lightweight",
         help="Sample id used by target diagnostics.",
@@ -306,6 +312,10 @@ def main() -> int:
             args.target_thresholds,
         ),
         temporary_env("AI_LIGHTWEIGHT_TARGET_CANDIDATE_GAMMAS", args.target_gammas),
+        temporary_env(
+            "AI_LIGHTWEIGHT_TARGET_NORMALIZATION",
+            args.target_normalization,
+        ),
         temporary_env("AI_DEBUG_SAVE_MASKS", "0"),
     ):
         result = LightweightSegmenter().segment(
@@ -329,7 +339,9 @@ def main() -> int:
     print(f"image size: {image.width} x {image.height}")
     print(f"onnxRunCount: {onnx_timings.get('onnxRunCount', 'n/a')}")
     print(f"sessionCacheHit: {onnx_timings.get('sessionCacheHit', 'n/a')}")
+    print(f"normalization: {onnx_timings.get('normalization', 'n/a')}")
     print(f"candidateScoringMs: {mask_diagnostics.get('candidateScoringMs', 'n/a')}")
+    print(f"semanticCalibration: {mask_diagnostics.get('semanticCalibration')}")
     print(f"selectedCandidate: {mask_diagnostics.get('selectedCandidate')}")
     print(f"selectedReason: {mask_diagnostics.get('selectedReason')}")
     stage_diagnostics = mask_diagnostics.get("stageDiagnostics") or {}

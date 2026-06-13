@@ -287,6 +287,7 @@ def _get_target_roi_diagnostics(
     histogram = alpha_mask.histogram()
     foreground_pixels = sum(histogram[1:])
     strong_foreground_pixels = sum(histogram[129:])
+    roi_mask_foreground_coverage = 0.0
 
     if bbox:
         left, top, right, bottom = bbox
@@ -310,6 +311,10 @@ def _get_target_roi_diagnostics(
                 left <= normalized_roi["x"] + 2
                 or right >= roi_right - 2
             )
+            roi_mask_foreground_coverage = foreground_pixels / max(
+                1,
+                normalized_roi["width"] * normalized_roi["height"],
+            )
 
     roi_width_ratio = (
         normalized_roi["width"] / max(1, image_width)
@@ -330,6 +335,47 @@ def _get_target_roi_diagnostics(
             or normalized_roi["y"] + normalized_roi["height"] >= image_height - 1
         )
     )
+    selected_threshold = float(selected_candidate.get("threshold") or 0.0)
+    selected_height_ratio = float(selected_candidate.get("heightRatio") or 0.0)
+    selected_touches_border = bool(selected_candidate.get("touchesBorder"))
+    selected_threshold_risk = selected_threshold <= 0.35
+    selected_touches_boundary_risk = (
+        selected_touches_border and selected_height_ratio >= 0.95
+    )
+    partial_coverage_reasons = []
+
+    if normalized_roi and foreground_pixels / max(1, image_width * image_height) < 0.06:
+        partial_coverage_reasons.append("full_image_foreground_below_0.06")
+
+    if normalized_roi and bbox_width_ratio < 0.55:
+        partial_coverage_reasons.append("mask_width_covers_less_than_0.55_of_roi")
+
+    if normalized_roi and roi_mask_foreground_coverage < 0.30:
+        partial_coverage_reasons.append("mask_foreground_covers_less_than_0.30_of_roi")
+
+    if selected_threshold_risk:
+        partial_coverage_reasons.append("selected_threshold_at_or_below_0.35")
+
+    if selected_touches_boundary_risk:
+        partial_coverage_reasons.append("selected_candidate_spans_roi_height_boundary")
+
+    partial_coverage_risk = bool(
+        normalized_roi
+        and (
+            (
+                foreground_pixels / max(1, image_width * image_height) < 0.06
+                and bbox_width_ratio < 0.55
+            )
+            or (
+                bbox_width_ratio < 0.50
+                and roi_mask_foreground_coverage < 0.30
+            )
+            or (
+                selected_threshold_risk
+                and selected_touches_boundary_risk
+            )
+        )
+    )
 
     return {
         "bbox": bbox_payload,
@@ -337,21 +383,35 @@ def _get_target_roi_diagnostics(
         "bboxHeightRatio": bbox_height_ratio,
         "bboxWidthRatio": bbox_width_ratio,
         "foregroundRatio": foreground_pixels / max(1, image_width * image_height),
+        "lowCoverageReason": (
+            ";".join(partial_coverage_reasons)
+            if partial_coverage_risk
+            else None
+        ),
+        "partialCoverageRisk": partial_coverage_risk,
         "role": debug_role,
         "roi": normalized_roi,
         "roiHeightRatio": roi_height_ratio,
         "roiLikelyTooWide": roi_width_ratio > 0.92,
         "roiTouchesImageBorder": roi_touches_image_border,
         "roiWidthRatio": roi_width_ratio,
+        "roiMaskAreaCoverage": bbox_area_ratio,
+        "roiMaskForegroundCoverage": roi_mask_foreground_coverage,
+        "roiMaskHeightCoverage": bbox_height_ratio,
+        "roiMaskWidthCoverage": bbox_width_ratio,
         "selectedCandidate": {
             "bboxAreaRatio": float(selected_candidate.get("bboxAreaRatio") or 0.0),
+            "fillRatio": float(selected_candidate.get("fillRatio") or 0.0),
             "foregroundRatio": float(selected_candidate.get("foregroundRatio") or 0.0),
+            "heightRatio": selected_height_ratio,
             "rejectedReason": selected_candidate.get("rejectedReason"),
             "score": selected_candidate.get("score"),
-            "threshold": selected_candidate.get("threshold"),
-            "touchesBorder": bool(selected_candidate.get("touchesBorder")),
+            "threshold": selected_threshold,
+            "touchesBorder": selected_touches_border,
             "widthRatio": float(selected_candidate.get("widthRatio") or 0.0),
         },
+        "selectedThresholdRisk": selected_threshold_risk,
+        "selectedTouchesBoundaryRisk": selected_touches_boundary_risk,
         "strongForegroundRatio": strong_foreground_pixels / max(1, image_width * image_height),
         "strongWithinForegroundRatio": (
             strong_foreground_pixels / max(1, foreground_pixels)
@@ -421,8 +481,11 @@ def _mask_quality_error(
         selected_candidate = {}
 
     selected_width_ratio = float(selected_candidate.get("widthRatio") or 0.0)
+    selected_height_ratio = float(selected_candidate.get("heightRatio") or 0.0)
     selected_area_ratio = float(selected_candidate.get("bboxAreaRatio") or 0.0)
+    selected_fill_ratio = float(selected_candidate.get("fillRatio") or 0.0)
     selected_foreground_ratio = float(selected_candidate.get("foregroundRatio") or 0.0)
+    selected_threshold = float(selected_candidate.get("threshold") or 0.0)
     selected_touches_border = bool(selected_candidate.get("touchesBorder"))
     target_roi_diagnostics = roi_diagnostics or {}
     roi_width_ratio = float(target_roi_diagnostics.get("roiWidthRatio") or 0.0)
@@ -430,13 +493,12 @@ def _mask_quality_error(
     touches_roi_left_or_right = bool(
         target_roi_diagnostics.get("touchesRoiLeftOrRight")
     )
+    partial_coverage_risk = bool(
+        target_roi_diagnostics.get("partialCoverageRisk")
+    )
+    low_coverage_reason = target_roi_diagnostics.get("lowCoverageReason")
 
-    if is_target_with_roi and roi_likely_too_wide and (
-        selected_touches_border
-        or selected_width_ratio > 0.80
-        or selected_area_ratio > 0.65
-        or touches_roi_left_or_right
-    ):
+    if is_target_with_roi and roi_likely_too_wide:
         return _quality_failure(
             "roi_too_wide",
             (
@@ -451,6 +513,7 @@ def _mask_quality_error(
     if is_target_with_roi and (
         (selected_touches_border and selected_width_ratio > 0.80)
         or selected_area_ratio > 0.65
+        or selected_fill_ratio < 0.42
         or (touches_roi_left_or_right and bbox_width_ratio > 0.80)
     ):
         return _quality_failure(
@@ -461,7 +524,25 @@ def _mask_quality_error(
                 f" bboxWidthRatio={bbox_width_ratio:.4f}"
                 f" selectedWidthRatio={selected_width_ratio:.4f}"
                 f" selectedBboxAreaRatio={selected_area_ratio:.4f}"
+                f" selectedFillRatio={selected_fill_ratio:.4f}"
                 f" touchesBorder={selected_touches_border}"
+            ),
+        )
+
+    if is_target_with_roi and partial_coverage_risk:
+        return _quality_failure(
+            "partial",
+            (
+                "AI 仅识别到局部裤面，自动校色不可靠，请缩小或调整框选区域，"
+                "或手动编辑校色范围。"
+                f" foregroundRatio={full_foreground_ratio:.4f}"
+                f" roiMaskWidthCoverage={bbox_width_ratio:.4f}"
+                f" roiMaskHeightCoverage={bbox_height_ratio:.4f}"
+                f" roiMaskAreaCoverage={bbox_area_ratio:.4f}"
+                f" selectedThreshold={selected_threshold:.2f}"
+                f" selectedHeightRatio={selected_height_ratio:.4f}"
+                f" touchesBorder={selected_touches_border}"
+                f" reason={low_coverage_reason or 'partial_roi_coverage'}"
             ),
         )
 

@@ -38,19 +38,29 @@ type RemoteAiSegmentationResponse = {
 type RemoteAiDiagnostics = {
   bboxAreaRatio?: number;
   bboxWidthRatio?: number;
+  lowCoverageReason?: string | null;
+  partialCoverageRisk?: boolean;
   roiHeightRatio?: number;
   roiLikelyTooWide?: boolean;
+  roiMaskAreaCoverage?: number;
+  roiMaskForegroundCoverage?: number;
+  roiMaskHeightCoverage?: number;
+  roiMaskWidthCoverage?: number;
   roiTouchesImageBorder?: boolean;
   roiWidthRatio?: number;
   selectedCandidate?: {
     bboxAreaRatio?: number;
+    fillRatio?: number;
     foregroundRatio?: number;
+    heightRatio?: number;
     rejectedReason?: string | null;
     score?: number;
     threshold?: number;
     touchesBorder?: boolean;
     widthRatio?: number;
   };
+  selectedThresholdRisk?: boolean;
+  selectedTouchesBoundaryRisk?: boolean;
   touchesRoiLeftOrRight?: boolean;
 };
 
@@ -259,7 +269,9 @@ function getRemoteTargetMaskQualityIssue(
     const selectedCandidate = diagnostics?.selectedCandidate;
     const selectedTouchesBorder = Boolean(selectedCandidate?.touchesBorder);
     const selectedWidthRatio = Number(selectedCandidate?.widthRatio ?? 0);
+    const selectedHeightRatio = Number(selectedCandidate?.heightRatio ?? 0);
     const selectedAreaRatio = Number(selectedCandidate?.bboxAreaRatio ?? 0);
+    const selectedThreshold = Number(selectedCandidate?.threshold ?? 1);
     const roiLikelyTooWide =
       diagnostics?.roiLikelyTooWide === true || roiWidthRatio > 0.92;
     const unreliableRoiMessage =
@@ -283,6 +295,17 @@ function getRemoteTargetMaskQualityIssue(
       (bboxWidthRatio >= 0.96 && maskStats.touchesRoiBoundary)
     ) {
       return overCoverageMessage;
+    }
+
+    if (
+      diagnostics?.partialCoverageRisk === true ||
+      maskStats.foregroundRatio < 0.06 ||
+      (selectedThreshold <= 0.35 &&
+        selectedTouchesBorder &&
+        selectedHeightRatio >= 0.95) ||
+      (bboxWidthRatio < 0.55 && maskStats.foregroundRatio < 0.08)
+    ) {
+      return "AI 只识别到局部裤面，自动校色不可靠，请调整框选范围或手动编辑校色区域。";
     }
 
     if (
