@@ -1,5 +1,6 @@
 import argparse
 import base64
+import json
 import os
 import sys
 from contextlib import contextmanager
@@ -22,6 +23,12 @@ from segmenters.postprocess import normalize_roi
 
 DEFAULT_LABELS = "4,5,6,7"
 DEFAULT_OUTPUT = "debug/lightweight-mask.png"
+SAFE_FAILURE_QUALITIES = {
+    "low_confidence",
+    "over_coverage",
+    "partial",
+    "roi_too_wide",
+}
 
 
 @contextmanager
@@ -137,6 +144,73 @@ def mask_summary(mask: Image.Image, component_count: Optional[int] = None) -> di
             )
         ),
     }
+
+
+def get_pass_fail_suggestion(
+    expected_result: Optional[str],
+    actual_success: bool,
+    actual_quality: str,
+) -> str:
+    if expected_result:
+        matches = (
+            actual_success
+            if expected_result == "success"
+            else not actual_success and actual_quality == expected_result
+        )
+        return "matches_expected_result" if matches else "does_not_match_expected_result"
+
+    if actual_success:
+        return "review_success_mask"
+
+    if actual_quality in SAFE_FAILURE_QUALITIES:
+        return "review_safe_failure"
+
+    return "review_unclassified_failure"
+
+
+def write_summary_json(
+    output_path: Optional[Path],
+    args: argparse.Namespace,
+    result,
+    mask_diagnostics: dict,
+    onnx_timings: dict,
+    final_mask_summary: Optional[dict],
+) -> None:
+    if output_path is None:
+        return
+
+    selected_candidate = mask_diagnostics.get("selectedCandidate") or {}
+    postprocess_summary = mask_diagnostics.get("postprocess") or {}
+    result_summary = final_mask_summary or postprocess_summary
+    actual_quality = result.quality or ("success" if result.success else "failed")
+    payload = {
+        "actualQuality": actual_quality,
+        "actualSuccess": result.success,
+        "bbox": result_summary.get("bbox"),
+        "candidateScoringMs": mask_diagnostics.get("candidateScoringMs"),
+        "caseId": args.case_id,
+        "category": args.category,
+        "expectedResult": args.expected_result,
+        "foregroundRatio": result_summary.get("foregroundRatio", 0.0),
+        "imageType": args.image_type,
+        "onnxRunCount": onnx_timings.get("onnxRunCount"),
+        "passFailSuggestion": get_pass_fail_suggestion(
+            args.expected_result,
+            result.success,
+            actual_quality,
+        ),
+        "roiDiagnostics": result.diagnostics or {},
+        "selectedCandidate": selected_candidate or None,
+        "selectedScore": selected_candidate.get("score"),
+        "selectedThreshold": selected_candidate.get("threshold"),
+    }
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n",
+        encoding="utf-8",
+    )
+    print(f"summary json: {output_path}")
 
 
 def print_stage_summary(
@@ -268,6 +342,38 @@ def parse_args() -> argparse.Namespace:
         help="Sample id used by target diagnostics.",
     )
     parser.add_argument(
+        "--case-id",
+        default=None,
+        help="Stable evaluation case id, for example trouser_whitebg_001.",
+    )
+    parser.add_argument(
+        "--category",
+        default=None,
+        help="Garment category metadata, for example trouser or jacket.",
+    )
+    parser.add_argument(
+        "--image-type",
+        default=None,
+        help="Image type metadata, for example whitebg, hanger, or modelhalf.",
+    )
+    parser.add_argument(
+        "--expected-result",
+        choices=(
+            "success",
+            "roi_too_wide",
+            "over_coverage",
+            "partial",
+            "low_confidence",
+        ),
+        default=None,
+        help="Expected evaluation result. This does not alter quality gates.",
+    )
+    parser.add_argument(
+        "--summary-json",
+        default=None,
+        help="Optional structured evaluation summary JSON path.",
+    )
+    parser.add_argument(
         "--require-success",
         action="store_true",
         help="Exit non-zero when the segmenter returns success:false.",
@@ -280,6 +386,7 @@ def main() -> int:
     model_path = resolve_path(args.model_path)
     image_path = resolve_path(args.image_path)
     output_path = resolve_path(args.output)
+    summary_json_path = resolve_path(args.summary_json) if args.summary_json else None
 
     if not model_path.exists():
         print(f"Model file does not exist: {model_path}", file=sys.stderr)
@@ -335,6 +442,10 @@ def main() -> int:
     print(f"success: {result.success}")
     print(f"message: {result.message}")
     print(f"quality: {result.quality or 'none'}")
+    print(f"case id: {args.case_id or 'none'}")
+    print(f"category: {args.category or 'none'}")
+    print(f"image type: {args.image_type or 'none'}")
+    print(f"expected result: {args.expected_result or 'none'}")
     print(f"labels: {args.labels}")
     print(f"image size: {image.width} x {image.height}")
     print(f"onnxRunCount: {onnx_timings.get('onnxRunCount', 'n/a')}")
@@ -371,6 +482,14 @@ def main() -> int:
     print(f"bodyFilterDiagnostics: {mask_diagnostics.get('bodyFilterDiagnostics')}")
 
     if not result.success:
+        write_summary_json(
+            summary_json_path,
+            args,
+            result,
+            mask_diagnostics,
+            onnx_timings,
+            None,
+        )
         print("mask size: none")
         print("foreground pixels: 0")
         print("foreground ratio: 0.000000")
@@ -408,6 +527,14 @@ def main() -> int:
     summary = mask_summary(
         mask,
         int(mask_diagnostics.get("connectedComponentCount") or 0),
+    )
+    write_summary_json(
+        summary_json_path,
+        args,
+        result,
+        mask_diagnostics,
+        onnx_timings,
+        summary,
     )
     print(f"mask size: {mask.width} x {mask.height}")
     print(f"mask summary: {summary}")
