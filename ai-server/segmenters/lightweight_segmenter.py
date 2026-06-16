@@ -428,6 +428,12 @@ def _get_target_roi_diagnostics(
         if normalized_roi
         else 0.0
     )
+    roi_area_ratio = (
+        (normalized_roi["width"] * normalized_roi["height"])
+        / max(1, image_width * image_height)
+        if normalized_roi
+        else 0.0
+    )
     roi_touches_image_border = bool(
         normalized_roi
         and (
@@ -444,16 +450,49 @@ def _get_target_roi_diagnostics(
     selected_touches_boundary_risk = (
         selected_touches_border and selected_height_ratio >= 0.95
     )
+    foreground_ratio_in_full_image = foreground_pixels / max(1, image_width * image_height)
+    foreground_ratio_in_roi = roi_mask_foreground_coverage
+    roi_likely_too_wide = bool(
+        normalized_roi
+        and (
+            roi_width_ratio > 0.92
+            or (
+                roi_width_ratio >= 0.90
+                and roi_height_ratio >= 0.95
+            )
+            or (roi_width_ratio >= 0.90 and roi_touches_image_border)
+        )
+    )
+    roi_likely_too_narrow = bool(
+        normalized_roi
+        and roi_area_ratio <= 0.05
+    )
+    partial_patch_risk = bool(
+        roi_likely_too_narrow
+        and foreground_ratio_in_full_image < 0.025
+        and bbox is not None
+    )
+    partial_patch_risk_reason = (
+        "small_roi_local_patch_full_foreground_below_0.025"
+        if partial_patch_risk
+        else None
+    )
     partial_coverage_reasons = []
 
-    if normalized_roi and foreground_pixels / max(1, image_width * image_height) < 0.06:
+    if normalized_roi and foreground_ratio_in_full_image < 0.06:
         partial_coverage_reasons.append("full_image_foreground_below_0.06")
 
     if normalized_roi and bbox_width_ratio < 0.55:
         partial_coverage_reasons.append("mask_width_covers_less_than_0.55_of_roi")
 
-    if normalized_roi and roi_mask_foreground_coverage < 0.30:
+    if normalized_roi and foreground_ratio_in_roi < 0.30:
         partial_coverage_reasons.append("mask_foreground_covers_less_than_0.30_of_roi")
+
+    if roi_likely_too_narrow:
+        partial_coverage_reasons.append("roi_area_at_or_below_0.05")
+
+    if partial_patch_risk_reason:
+        partial_coverage_reasons.append(partial_patch_risk_reason)
 
     if selected_threshold_risk:
         partial_coverage_reasons.append("selected_threshold_at_or_below_0.35")
@@ -465,17 +504,18 @@ def _get_target_roi_diagnostics(
         normalized_roi
         and (
             (
-                foreground_pixels / max(1, image_width * image_height) < 0.06
+                foreground_ratio_in_full_image < 0.06
                 and bbox_width_ratio < 0.55
             )
             or (
                 bbox_width_ratio < 0.50
-                and roi_mask_foreground_coverage < 0.30
+                and foreground_ratio_in_roi < 0.30
             )
             or (
                 selected_threshold_risk
                 and selected_touches_boundary_risk
             )
+            or partial_patch_risk
         )
     )
 
@@ -484,21 +524,33 @@ def _get_target_roi_diagnostics(
         "bboxAreaRatio": bbox_area_ratio,
         "bboxHeightRatio": bbox_height_ratio,
         "bboxWidthRatio": bbox_width_ratio,
-        "foregroundRatio": foreground_pixels / max(1, image_width * image_height),
+        "forcedPartialBySmallRoi": partial_patch_risk,
+        "foregroundRatio": foreground_ratio_in_full_image,
+        "foregroundRatioInFullImage": foreground_ratio_in_full_image,
+        "foregroundRatioInRoi": foreground_ratio_in_roi,
         "lowCoverageReason": (
             ";".join(partial_coverage_reasons)
             if partial_coverage_risk
             else None
         ),
+        "partialPatchRisk": partial_patch_risk,
+        "partialPatchRiskReason": partial_patch_risk_reason,
         "partialCoverageRisk": partial_coverage_risk,
         "role": debug_role,
         "roi": normalized_roi,
+        "roiAreaRatio": roi_area_ratio,
         "roiHeightRatio": roi_height_ratio,
-        "roiLikelyTooWide": roi_width_ratio > 0.92,
+        "roiLikelyTooNarrow": roi_likely_too_narrow,
+        "roiLikelyTooWide": roi_likely_too_wide,
         "roiTouchesImageBorder": roi_touches_image_border,
+        "roiTooNarrowReason": (
+            "roi_area_at_or_below_0.05"
+            if roi_likely_too_narrow
+            else None
+        ),
         "roiWidthRatio": roi_width_ratio,
         "roiMaskAreaCoverage": bbox_area_ratio,
-        "roiMaskForegroundCoverage": roi_mask_foreground_coverage,
+        "roiMaskForegroundCoverage": foreground_ratio_in_roi,
         "roiMaskHeightCoverage": bbox_height_ratio,
         "roiMaskWidthCoverage": bbox_width_ratio,
         "selectedCandidate": {
