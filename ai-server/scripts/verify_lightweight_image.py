@@ -205,7 +205,11 @@ def write_summary_json(
         "cropSize": clip_diagnostics.get("cropSize"),
         "expectedResult": args.expected_result,
         "expandedRoi": clip_diagnostics.get("expandedRoi"),
+        "evaluationContext": roi_diagnostics.get("evaluationContext"),
         "finalQualityGate": roi_diagnostics.get("finalQualityGate"),
+        "finalQualityGateAfterDowngrade": roi_diagnostics.get(
+            "finalQualityGateAfterDowngrade"
+        ),
         "finalQualityReason": roi_diagnostics.get("finalQualityReason"),
         "foregroundRatio": result_summary.get("foregroundRatio", 0.0),
         "imageType": args.image_type,
@@ -214,6 +218,10 @@ def write_summary_json(
         "overflowLeftRatio": clip_diagnostics.get("overflowLeftRatio"),
         "overflowRightRatio": clip_diagnostics.get("overflowRightRatio"),
         "overflowTopRatio": clip_diagnostics.get("overflowTopRatio"),
+        "originalFinalQualityGate": roi_diagnostics.get("originalFinalQualityGate"),
+        "originalQualityGateReasons": (
+            roi_diagnostics.get("originalQualityGateReasons") or []
+        ),
         "paddedRoi": clip_diagnostics.get("paddedRoi"),
         "passFailSuggestion": get_pass_fail_suggestion(
             args.expected_result,
@@ -248,6 +256,16 @@ def write_summary_json(
         "selectedReason": mask_diagnostics.get("selectedReason"),
         "selectedScore": selected_candidate.get("score"),
         "selectedThreshold": selected_candidate.get("threshold"),
+        "tightCompactRoiDowngradeReason": roi_diagnostics.get(
+            "tightCompactRoiDowngradeReason"
+        ),
+        "tightCompactRoiGateDowngraded": roi_diagnostics.get(
+            "tightCompactRoiGateDowngraded"
+        ),
+        "tightCompactRoiLikelySafe": roi_diagnostics.get("tightCompactRoiLikelySafe"),
+        "tightCompactRoiStillRejectedReason": roi_diagnostics.get(
+            "tightCompactRoiStillRejectedReason"
+        ),
         "totalCandidates": candidate_summary.get("totalCandidates"),
     }
 
@@ -469,6 +487,10 @@ def main() -> int:
             "AI_LIGHTWEIGHT_TARGET_NORMALIZATION",
             args.target_normalization,
         ),
+        temporary_env("AI_LIGHTWEIGHT_EVAL_CASE_ID", args.case_id),
+        temporary_env("AI_LIGHTWEIGHT_EVAL_CATEGORY", args.category),
+        temporary_env("AI_LIGHTWEIGHT_EVAL_IMAGE_TYPE", args.image_type),
+        temporary_env("AI_LIGHTWEIGHT_EVAL_EXPECTED_RESULT", args.expected_result),
         temporary_env("AI_DEBUG_SAVE_MASKS", "0"),
     ):
         result = LightweightSegmenter().segment(
