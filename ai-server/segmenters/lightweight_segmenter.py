@@ -522,6 +522,96 @@ def _get_target_roi_diagnostics(
     }
 
 
+def _get_postclip_boundary_policy(
+    *,
+    is_target_with_roi: bool,
+    roi_likely_too_wide: bool,
+    partial_coverage_risk: bool,
+    selected_candidate: dict[str, object],
+    selected_fill_ratio: float,
+    selected_touches_border: bool,
+    clip_diagnostics: dict[str, object],
+) -> dict[str, object]:
+    postclip_boundary_created = bool(
+        clip_diagnostics.get("postclipBoundaryCreated")
+    )
+    preclip_overflow_ratio = float(
+        clip_diagnostics.get("preclipOverflowRatio") or 0.0
+    )
+
+    if selected_touches_border and postclip_boundary_created:
+        boundary_contact_source = "mixed"
+    elif selected_touches_border:
+        boundary_contact_source = "true_preclip"
+    elif postclip_boundary_created:
+        boundary_contact_source = "artificial_postclip"
+    else:
+        boundary_contact_source = "none"
+
+    hard_rejected_reasons = {
+        "bbox_area_too_small",
+        "bbox_too_narrow",
+        "bbox_too_short",
+        "coverage_too_large",
+        "empty_mask",
+        "foreground_too_low",
+        "low_candidate_score",
+        "low_threshold_boundary_contact",
+        "roi_over_coverage",
+        "sparse_candidate",
+    }
+    rejected_reason = selected_candidate.get("rejectedReason")
+    hard_rejected_reason = rejected_reason in hard_rejected_reasons
+    can_ignore_artificial_postclip = (
+        is_target_with_roi
+        and boundary_contact_source == "artificial_postclip"
+        and preclip_overflow_ratio <= 0.15
+        and not roi_likely_too_wide
+        and not partial_coverage_risk
+        and selected_fill_ratio >= 0.42
+        and not hard_rejected_reason
+    )
+    still_rejected_reasons = []
+
+    if not is_target_with_roi:
+        still_rejected_reasons.append("not_target_roi_first")
+
+    if boundary_contact_source != "artificial_postclip":
+        still_rejected_reasons.append(
+            f"boundary_contact_source_{boundary_contact_source}"
+        )
+
+    if preclip_overflow_ratio > 0.15:
+        still_rejected_reasons.append("preclip_overflow_above_0.15")
+
+    if roi_likely_too_wide:
+        still_rejected_reasons.append("roi_too_wide")
+
+    if partial_coverage_risk:
+        still_rejected_reasons.append("partial_coverage_risk")
+
+    if selected_fill_ratio < 0.42:
+        still_rejected_reasons.append("low_fill_ratio")
+
+    if hard_rejected_reason:
+        still_rejected_reasons.append(f"hard_candidate_rejection_{rejected_reason}")
+
+    return {
+        "boundaryContactSource": boundary_contact_source,
+        "postclipBoundaryIgnored": can_ignore_artificial_postclip,
+        "postclipBoundaryIgnoreReason": (
+            "artificial_postclip_boundary_with_limited_overflow"
+            if can_ignore_artificial_postclip
+            else None
+        ),
+        "postclipBoundaryStillRejectedReason": (
+            ";".join(still_rejected_reasons)
+            if not can_ignore_artificial_postclip and still_rejected_reasons
+            else None
+        ),
+    }
+
+
 def _mask_quality_error(
     mask,
     roi,
@@ -619,6 +709,19 @@ def _mask_quality_error(
         *candidate_context_reasons,
         *clip_context_reasons,
     ]
+    postclip_boundary_policy = _get_postclip_boundary_policy(
+        is_target_with_roi=is_target_with_roi,
+        roi_likely_too_wide=roi_likely_too_wide,
+        partial_coverage_risk=partial_coverage_risk,
+        selected_candidate=selected_candidate,
+        selected_fill_ratio=selected_fill_ratio,
+        selected_touches_border=selected_touches_border,
+        clip_diagnostics=clip_diagnostics,
+    )
+    target_roi_diagnostics.update(postclip_boundary_policy)
+    postclip_boundary_ignored = bool(
+        postclip_boundary_policy.get("postclipBoundaryIgnored")
+    )
 
     if is_target_with_roi and roi_likely_too_wide:
         return _quality_failure(
@@ -636,22 +739,30 @@ def _mask_quality_error(
 
     if is_target_with_roi and (
         (selected_touches_border and selected_width_ratio > 0.80)
-        or selected_area_ratio > 0.65
+        or (selected_area_ratio > 0.65 and not postclip_boundary_ignored)
         or selected_fill_ratio < 0.42
-        or (touches_roi_left_or_right and bbox_width_ratio > 0.80)
+        or (
+            touches_roi_left_or_right
+            and bbox_width_ratio > 0.80
+            and not postclip_boundary_ignored
+        )
     ):
         low_confidence_gate_reasons = []
 
         if selected_touches_border and selected_width_ratio > 0.80:
             low_confidence_gate_reasons.append("roi_boundary_contact")
 
-        if selected_area_ratio > 0.65:
+        if selected_area_ratio > 0.65 and not postclip_boundary_ignored:
             low_confidence_gate_reasons.append("bbox_area_too_large")
 
         if selected_fill_ratio < 0.42:
             low_confidence_gate_reasons.extend(["low_fill_ratio", "sparse_candidate"])
 
-        if touches_roi_left_or_right and bbox_width_ratio > 0.80:
+        if (
+            touches_roi_left_or_right
+            and bbox_width_ratio > 0.80
+            and not postclip_boundary_ignored
+        ):
             low_confidence_gate_reasons.append("postclip_boundary_contact")
 
         return _quality_failure(
@@ -692,7 +803,7 @@ def _mask_quality_error(
         full_bbox_width_ratio >= 0.95
         or (full_foreground_ratio > 0.40 and touches_image_border)
         or (selected_width_ratio >= 0.96 and selected_touches_border)
-        or selected_area_ratio >= 0.80
+        or (selected_area_ratio >= 0.80 and not postclip_boundary_ignored)
         or (selected_foreground_ratio > 0.50 and selected_touches_border)
         or selected_candidate.get("rejectedReason") == "roi_over_coverage"
     ):
@@ -707,7 +818,7 @@ def _mask_quality_error(
         if selected_width_ratio >= 0.96 and selected_touches_border:
             over_coverage_reasons.append("roi_boundary_contact")
 
-        if selected_area_ratio >= 0.80:
+        if selected_area_ratio >= 0.80 and not postclip_boundary_ignored:
             over_coverage_reasons.append("bbox_area_too_large")
 
         if selected_foreground_ratio > 0.50 and selected_touches_border:
