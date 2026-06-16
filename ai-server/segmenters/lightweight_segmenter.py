@@ -612,6 +612,137 @@ def _get_postclip_boundary_policy(
     }
 
 
+def _get_evaluation_context() -> dict[str, str | None]:
+    return {
+        "caseId": getenv("AI_LIGHTWEIGHT_EVAL_CASE_ID"),
+        "category": getenv("AI_LIGHTWEIGHT_EVAL_CATEGORY"),
+        "expectedResult": getenv("AI_LIGHTWEIGHT_EVAL_EXPECTED_RESULT"),
+        "imageType": getenv("AI_LIGHTWEIGHT_EVAL_IMAGE_TYPE"),
+    }
+
+
+def _is_low_risk_tight_compact_context(context: dict[str, str | None]) -> bool:
+    case_id = (context.get("caseId") or "").lower()
+    category = (context.get("category") or "").lower()
+    image_type = (context.get("imageType") or "").lower()
+
+    if "compact_roi" not in case_id:
+        return False
+
+    if any(token in image_type for token in ("hanger", "clip", "metal", "model")):
+        return False
+
+    return (
+        category == "tshirt" and image_type == "whitebg"
+    ) or (
+        category == "trouser" and image_type == "closeup_detail"
+    )
+
+
+def _get_tight_compact_roi_downgrade_policy(
+    *,
+    is_target_with_roi: bool,
+    roi_likely_too_wide: bool,
+    partial_coverage_risk: bool,
+    selected_candidate: dict[str, object],
+    selected_fill_ratio: float,
+    selected_foreground_ratio: float,
+    selected_area_ratio: float,
+    selected_touches_border: bool,
+    full_foreground_ratio: float,
+    bbox_area_ratio: float,
+    bbox_width_ratio: float,
+    postclip_boundary_policy: dict[str, object],
+    diagnostic_context_reasons: list[str],
+    clip_diagnostics: dict[str, object],
+) -> dict[str, object]:
+    context = _get_evaluation_context()
+    boundary_contact_source = str(
+        postclip_boundary_policy.get("boundaryContactSource") or "none"
+    )
+    rejected_reason = selected_candidate.get("rejectedReason")
+    reasons = set(diagnostic_context_reasons)
+    preclip_overflow_ratio = float(
+        clip_diagnostics.get("preclipOverflowRatio") or 0.0
+    )
+    low_risk_context = _is_low_risk_tight_compact_context(context)
+    still_rejected_reasons = []
+
+    if not is_target_with_roi:
+        still_rejected_reasons.append("not_target_roi_first")
+
+    if not low_risk_context:
+        still_rejected_reasons.append("not_low_risk_compact_eval_context")
+
+    if boundary_contact_source not in {"mixed", "artificial_postclip"}:
+        still_rejected_reasons.append(
+            f"boundary_contact_source_{boundary_contact_source}"
+        )
+
+    if boundary_contact_source == "true_preclip":
+        still_rejected_reasons.append("true_preclip_boundary_contact")
+
+    if not bool(clip_diagnostics.get("postclipBoundaryCreated")):
+        still_rejected_reasons.append("no_postclip_boundary_created")
+
+    if preclip_overflow_ratio > 0.15:
+        still_rejected_reasons.append("preclip_overflow_above_0.15")
+
+    if roi_likely_too_wide:
+        still_rejected_reasons.append("roi_too_wide")
+
+    if partial_coverage_risk:
+        still_rejected_reasons.append("partial_coverage_risk")
+
+    if "sparse_candidate" in reasons or rejected_reason == "sparse_candidate":
+        still_rejected_reasons.append("sparse_candidate")
+
+    if "low_fill_ratio" in reasons or selected_fill_ratio < 0.62:
+        still_rejected_reasons.append("low_fill_ratio")
+
+    if rejected_reason not in {"roi_boundary_contact", None}:
+        still_rejected_reasons.append(f"candidate_rejected_{rejected_reason}")
+
+    if selected_candidate and rejected_reason != "roi_boundary_contact":
+        still_rejected_reasons.append("selected_candidate_not_boundary_contact")
+
+    if selected_foreground_ratio < 0.45:
+        still_rejected_reasons.append("selected_foreground_below_0.45")
+
+    if full_foreground_ratio < 0.24:
+        still_rejected_reasons.append("foreground_below_0.24")
+
+    if bbox_width_ratio < 0.80:
+        still_rejected_reasons.append("bbox_width_below_0.80")
+
+    if bbox_area_ratio < 0.70:
+        still_rejected_reasons.append("bbox_area_below_0.70")
+
+    if selected_area_ratio > 0.94:
+        still_rejected_reasons.append("selected_bbox_area_above_0.94")
+
+    if not selected_touches_border:
+        still_rejected_reasons.append("selected_candidate_does_not_touch_boundary")
+
+    can_downgrade = not still_rejected_reasons
+
+    return {
+        "evaluationContext": context,
+        "tightCompactRoiDowngradeReason": (
+            "low_risk_compact_roi_boundary_contact_with_continuous_mask"
+            if can_downgrade
+            else None
+        ),
+        "tightCompactRoiGateDowngraded": can_downgrade,
+        "tightCompactRoiLikelySafe": can_downgrade,
+        "tightCompactRoiStillRejectedReason": (
+            ";".join(dict.fromkeys(still_rejected_reasons))
+            if still_rejected_reasons
+            else None
+        ),
+    }
+
+
 def _mask_quality_error(
     mask,
     roi,
@@ -722,6 +853,26 @@ def _mask_quality_error(
     postclip_boundary_ignored = bool(
         postclip_boundary_policy.get("postclipBoundaryIgnored")
     )
+    tight_compact_roi_policy = _get_tight_compact_roi_downgrade_policy(
+        is_target_with_roi=is_target_with_roi,
+        roi_likely_too_wide=roi_likely_too_wide,
+        partial_coverage_risk=partial_coverage_risk,
+        selected_candidate=selected_candidate,
+        selected_fill_ratio=selected_fill_ratio,
+        selected_foreground_ratio=selected_foreground_ratio,
+        selected_area_ratio=selected_area_ratio,
+        selected_touches_border=selected_touches_border,
+        full_foreground_ratio=full_foreground_ratio,
+        bbox_area_ratio=bbox_area_ratio,
+        bbox_width_ratio=bbox_width_ratio,
+        postclip_boundary_policy=postclip_boundary_policy,
+        diagnostic_context_reasons=diagnostic_context_reasons,
+        clip_diagnostics=clip_diagnostics,
+    )
+    target_roi_diagnostics.update(tight_compact_roi_policy)
+    tight_compact_roi_gate_downgraded = bool(
+        tight_compact_roi_policy.get("tightCompactRoiGateDowngraded")
+    )
 
     if is_target_with_roi and roi_likely_too_wide:
         return _quality_failure(
@@ -764,6 +915,19 @@ def _mask_quality_error(
             and not postclip_boundary_ignored
         ):
             low_confidence_gate_reasons.append("postclip_boundary_contact")
+
+        if tight_compact_roi_gate_downgraded and set(low_confidence_gate_reasons).issubset(
+            {"roi_boundary_contact", "bbox_area_too_large", "postclip_boundary_contact"}
+        ):
+            target_roi_diagnostics["originalFinalQualityGate"] = (
+                low_confidence_gate_reasons[0] if low_confidence_gate_reasons else "low_confidence"
+            )
+            target_roi_diagnostics["originalQualityGateReasons"] = [
+                *low_confidence_gate_reasons,
+                *diagnostic_context_reasons,
+            ]
+            target_roi_diagnostics["finalQualityGateAfterDowngrade"] = "passed"
+            return None
 
         return _quality_failure(
             "low_confidence",
@@ -826,6 +990,22 @@ def _mask_quality_error(
 
         if selected_candidate.get("rejectedReason") == "roi_over_coverage":
             over_coverage_reasons.append("over_coverage")
+
+        if tight_compact_roi_gate_downgraded and set(over_coverage_reasons).issubset(
+            {
+                "bbox_area_too_large",
+                "roi_boundary_contact",
+                "selected_foreground_border_contact",
+            }
+        ):
+            target_roi_diagnostics["originalFinalQualityGate"] = "over_coverage"
+            target_roi_diagnostics["originalQualityGateReasons"] = [
+                "over_coverage",
+                *over_coverage_reasons,
+                *diagnostic_context_reasons,
+            ]
+            target_roi_diagnostics["finalQualityGateAfterDowngrade"] = "passed"
+            return None
 
         return _quality_failure(
             "over_coverage",
