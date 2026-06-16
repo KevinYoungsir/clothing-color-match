@@ -1035,6 +1035,42 @@ def _build_target_closeup_candidate_stages(probability: Any, image_size: Tuple[i
 
     accepted_candidates = [candidate for candidate in candidates if candidate["accepted"]]
     selected = accepted_candidates[0] if accepted_candidates else candidates[0]
+    rejected_reason_counts: dict[str, int] = {}
+
+    for candidate in candidates:
+        rejected_reason = candidate.get("rejectedReason")
+
+        if rejected_reason:
+            rejected_reason_counts[rejected_reason] = (
+                rejected_reason_counts.get(rejected_reason, 0) + 1
+            )
+
+    def public_candidate(candidate: dict[str, Any] | None) -> dict[str, Any] | None:
+        if candidate is None:
+            return None
+
+        return {key: value for key, value in candidate.items() if key != "stages"}
+
+    best_candidate_before_reject = public_candidate(candidates[0])
+    best_candidate_after_reject = public_candidate(
+        accepted_candidates[0] if accepted_candidates else None
+    )
+    selected_candidate = public_candidate(selected)
+    candidate_summary = {
+        "acceptedCandidates": len(accepted_candidates),
+        "bestCandidateAfterReject": best_candidate_after_reject,
+        "bestCandidateBeforeReject": best_candidate_before_reject,
+        "candidateBboxAreaRatio": selected.get("bboxAreaRatio"),
+        "candidateFillRatio": selected.get("fillRatio"),
+        "candidateHeightRatio": selected.get("heightRatio"),
+        "candidateWidthRatio": selected.get("widthRatio"),
+        "rejectedCandidates": len(candidates) - len(accepted_candidates),
+        "rejectedReasonCounts": rejected_reason_counts,
+        "selectedCandidate": selected_candidate,
+        "selectedScore": selected.get("score"),
+        "selectedThreshold": selected.get("threshold"),
+        "totalCandidates": len(candidates),
+    }
     selected_stages = build_soft_mask_stages(
         probability,
         image_size,
@@ -1060,7 +1096,9 @@ def _build_target_closeup_candidate_stages(probability: Any, image_size: Tuple[i
             "height": scoring_size[1],
             "width": scoring_size[0],
         },
-        "selectedCandidate": {key: value for key, value in selected.items() if key != "stages"},
+        "candidateSummary": candidate_summary,
+        "rejectedCandidateReasonCounts": rejected_reason_counts,
+        "selectedCandidate": selected_candidate,
         "selectedReason": selected_reason,
     }
 
@@ -1121,6 +1159,10 @@ def _probability_to_soft_mask(
             "candidateScoringSize": stages.get("candidateScoringSize"),
             "totalMaskBuildMs": total_mask_build_ms,
             "candidateDiagnostics": stages.get("candidateDiagnostics"),
+            "candidateSummary": stages.get("candidateSummary"),
+            "rejectedCandidateReasonCounts": stages.get(
+                "rejectedCandidateReasonCounts"
+            ),
             "selectedCandidate": stages.get("selectedCandidate"),
             "selectedReason": stages.get("selectedReason"),
             "stageDimensions": stage_dimensions,
@@ -1156,6 +1198,10 @@ def _probability_to_soft_mask(
             "candidateScoringSize": stages.get("candidateScoringSize"),
             "totalMaskBuildMs": total_mask_build_ms,
             "candidateDiagnostics": stages.get("candidateDiagnostics"),
+            "candidateSummary": stages.get("candidateSummary"),
+            "rejectedCandidateReasonCounts": stages.get(
+                "rejectedCandidateReasonCounts"
+            ),
             "selectedCandidate": stages.get("selectedCandidate"),
             "selectedReason": stages.get("selectedReason"),
             "stageDimensions": stage_dimensions,
@@ -1190,6 +1236,10 @@ def _probability_to_soft_mask(
         "candidateScoringSize": stages.get("candidateScoringSize"),
         "totalMaskBuildMs": total_mask_build_ms,
         "candidateDiagnostics": stages.get("candidateDiagnostics"),
+        "candidateSummary": stages.get("candidateSummary"),
+        "rejectedCandidateReasonCounts": stages.get(
+            "rejectedCandidateReasonCounts"
+        ),
         "selectedCandidate": stages.get("selectedCandidate"),
         "selectedReason": stages.get("selectedReason"),
         "stageDimensions": stage_dimensions,

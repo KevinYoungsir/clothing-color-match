@@ -180,29 +180,67 @@ def write_summary_json(
         return
 
     selected_candidate = mask_diagnostics.get("selectedCandidate") or {}
+    candidate_summary = mask_diagnostics.get("candidateSummary") or {}
     postprocess_summary = mask_diagnostics.get("postprocess") or {}
     result_summary = final_mask_summary or postprocess_summary
     actual_quality = result.quality or ("success" if result.success else "failed")
+    roi_diagnostics = result.diagnostics or {}
+    clip_diagnostics = roi_diagnostics.get("clipDiagnostics") or {}
     payload = {
+        "acceptedCandidates": candidate_summary.get("acceptedCandidates"),
         "actualQuality": actual_quality,
         "actualSuccess": result.success,
         "bbox": result_summary.get("bbox"),
+        "bestCandidateAfterReject": candidate_summary.get("bestCandidateAfterReject"),
+        "bestCandidateBeforeReject": candidate_summary.get("bestCandidateBeforeReject"),
+        "candidateBboxAreaRatio": candidate_summary.get("candidateBboxAreaRatio"),
+        "candidateFillRatio": candidate_summary.get("candidateFillRatio"),
+        "candidateHeightRatio": candidate_summary.get("candidateHeightRatio"),
         "candidateScoringMs": mask_diagnostics.get("candidateScoringMs"),
+        "candidateWidthRatio": candidate_summary.get("candidateWidthRatio"),
         "caseId": args.case_id,
         "category": args.category,
+        "clippedOutMaskArea": clip_diagnostics.get("clippedOutMaskArea"),
+        "cropSize": clip_diagnostics.get("cropSize"),
         "expectedResult": args.expected_result,
+        "expandedRoi": clip_diagnostics.get("expandedRoi"),
+        "finalQualityGate": roi_diagnostics.get("finalQualityGate"),
+        "finalQualityReason": roi_diagnostics.get("finalQualityReason"),
         "foregroundRatio": result_summary.get("foregroundRatio", 0.0),
         "imageType": args.image_type,
         "onnxRunCount": onnx_timings.get("onnxRunCount"),
+        "overflowBottomRatio": clip_diagnostics.get("overflowBottomRatio"),
+        "overflowLeftRatio": clip_diagnostics.get("overflowLeftRatio"),
+        "overflowRightRatio": clip_diagnostics.get("overflowRightRatio"),
+        "overflowTopRatio": clip_diagnostics.get("overflowTopRatio"),
+        "paddedRoi": clip_diagnostics.get("paddedRoi"),
         "passFailSuggestion": get_pass_fail_suggestion(
             args.expected_result,
             result.success,
             actual_quality,
         ),
-        "roiDiagnostics": result.diagnostics or {},
+        "postclipBoundaryCreated": clip_diagnostics.get("postclipBoundaryCreated"),
+        "postclipMaskArea": clip_diagnostics.get("postclipMaskArea"),
+        "postclipMaskBbox": clip_diagnostics.get("postclipMaskBbox"),
+        "postclipTouchesBottom": clip_diagnostics.get("postclipTouchesBottom"),
+        "postclipTouchesLeft": clip_diagnostics.get("postclipTouchesLeft"),
+        "postclipTouchesRight": clip_diagnostics.get("postclipTouchesRight"),
+        "postclipTouchesTop": clip_diagnostics.get("postclipTouchesTop"),
+        "preclipMaskArea": clip_diagnostics.get("preclipMaskArea"),
+        "preclipMaskBbox": clip_diagnostics.get("preclipMaskBbox"),
+        "preclipOverflowRatio": clip_diagnostics.get("preclipOverflowRatio"),
+        "qualityGateReasons": roi_diagnostics.get("qualityGateReasons") or [],
+        "rejectedCandidateReasonCounts": (
+            mask_diagnostics.get("rejectedCandidateReasonCounts") or {}
+        ),
+        "rejectedCandidates": candidate_summary.get("rejectedCandidates"),
+        "requestedRoi": clip_diagnostics.get("requestedRoi"),
+        "roiDiagnostics": roi_diagnostics,
         "selectedCandidate": selected_candidate or None,
+        "selectedReason": mask_diagnostics.get("selectedReason"),
         "selectedScore": selected_candidate.get("score"),
         "selectedThreshold": selected_candidate.get("threshold"),
+        "totalCandidates": candidate_summary.get("totalCandidates"),
     }
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -453,8 +491,14 @@ def main() -> int:
     print(f"normalization: {onnx_timings.get('normalization', 'n/a')}")
     print(f"candidateScoringMs: {mask_diagnostics.get('candidateScoringMs', 'n/a')}")
     print(f"semanticCalibration: {mask_diagnostics.get('semanticCalibration')}")
+    print(f"candidateSummary: {mask_diagnostics.get('candidateSummary')}")
+    print(
+        "rejectedCandidateReasonCounts: "
+        f"{mask_diagnostics.get('rejectedCandidateReasonCounts')}"
+    )
     print(f"selectedCandidate: {mask_diagnostics.get('selectedCandidate')}")
     print(f"selectedReason: {mask_diagnostics.get('selectedReason')}")
+    print(f"roiDiagnostics: {result.diagnostics}")
     stage_diagnostics = mask_diagnostics.get("stageDiagnostics") or {}
     stage_dimensions = mask_diagnostics.get("stageDimensions") or {}
     probability_dimensions = stage_dimensions.get("probability") or {}
