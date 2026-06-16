@@ -181,6 +181,98 @@ def _paste_crop_mask_to_full_image(
     return full_mask
 
 
+def _mask_alpha_area(mask: Image.Image) -> float:
+    histogram = mask.convert("L").histogram()
+
+    return sum(alpha * count for alpha, count in enumerate(histogram)) / 255.0
+
+
+def _mask_bbox_payload(mask: Image.Image) -> dict[str, int] | None:
+    bbox = mask.convert("L").getbbox()
+
+    if not bbox:
+        return None
+
+    left, top, right, bottom = bbox
+
+    return {
+        "height": bottom - top,
+        "width": right - left,
+        "x": left,
+        "y": top,
+    }
+
+
+def _get_preclip_postclip_diagnostics(
+    preclip_mask: Image.Image,
+    postclip_mask: Image.Image,
+    requested_roi: dict[str, int],
+    expanded_roi: dict[str, int],
+) -> dict[str, object]:
+    image_width, image_height = preclip_mask.size
+    roi_left = requested_roi["x"]
+    roi_top = requested_roi["y"]
+    roi_right = roi_left + requested_roi["width"]
+    roi_bottom = roi_top + requested_roi["height"]
+    preclip_area = _mask_alpha_area(preclip_mask)
+    postclip_area = _mask_alpha_area(postclip_mask)
+    clipped_out_area = max(0.0, preclip_area - postclip_area)
+
+    def region_area(box: tuple[int, int, int, int]) -> float:
+        left, top, right, bottom = box
+
+        if right <= left or bottom <= top:
+            return 0.0
+
+        return _mask_alpha_area(preclip_mask.crop(box))
+
+    overflow_left_area = region_area((0, 0, roi_left, image_height))
+    overflow_right_area = region_area((roi_right, 0, image_width, image_height))
+    overflow_top_area = region_area((0, 0, image_width, roi_top))
+    overflow_bottom_area = region_area((0, roi_bottom, image_width, image_height))
+    postclip_bbox = postclip_mask.convert("L").getbbox()
+    postclip_touches_left = bool(postclip_bbox and postclip_bbox[0] <= roi_left + 1)
+    postclip_touches_right = bool(postclip_bbox and postclip_bbox[2] >= roi_right - 1)
+    postclip_touches_top = bool(postclip_bbox and postclip_bbox[1] <= roi_top + 1)
+    postclip_touches_bottom = bool(postclip_bbox and postclip_bbox[3] >= roi_bottom - 1)
+    postclip_boundary_created = bool(
+        clipped_out_area > 0
+        and (
+            (overflow_left_area > 0 and postclip_touches_left)
+            or (overflow_right_area > 0 and postclip_touches_right)
+            or (overflow_top_area > 0 and postclip_touches_top)
+            or (overflow_bottom_area > 0 and postclip_touches_bottom)
+        )
+    )
+    area_denominator = max(1e-6, preclip_area)
+
+    return {
+        "cropSize": {
+            "height": expanded_roi["height"],
+            "width": expanded_roi["width"],
+        },
+        "expandedRoi": expanded_roi,
+        "maskAreaMetric": "alpha_weighted_pixels",
+        "paddedRoi": expanded_roi,
+        "postclipBoundaryCreated": postclip_boundary_created,
+        "postclipMaskArea": postclip_area,
+        "postclipMaskBbox": _mask_bbox_payload(postclip_mask),
+        "postclipTouchesBottom": postclip_touches_bottom,
+        "postclipTouchesLeft": postclip_touches_left,
+        "postclipTouchesRight": postclip_touches_right,
+        "postclipTouchesTop": postclip_touches_top,
+        "preclipMaskArea": preclip_area,
+        "preclipMaskBbox": _mask_bbox_payload(preclip_mask),
+        "clippedOutMaskArea": clipped_out_area,
+        "preclipOverflowRatio": clipped_out_area / area_denominator,
+        "overflowBottomRatio": overflow_bottom_area / area_denominator,
+        "overflowLeftRatio": overflow_left_area / area_denominator,
+        "overflowRightRatio": overflow_right_area / area_denominator,
+        "overflowTopRatio": overflow_top_area / area_denominator,
+        "requestedRoi": requested_roi,
+    }
+
+
 def _save_api_return_debug_mask(
     mask,
     segment_input: SegmentInput,
@@ -252,10 +344,20 @@ def _save_api_return_debug_mask(
         return
 
 
-def _quality_failure(quality: str, message: str) -> dict[str, str]:
+def _quality_failure(
+    quality: str,
+    message: str,
+    gate: str,
+    reasons: list[str] | None = None,
+) -> dict[str, object]:
+    unique_reasons = list(dict.fromkeys(reasons or [gate]))
+
     return {
+        "gate": gate,
         "message": message,
         "quality": quality,
+        "reason": message,
+        "reasons": unique_reasons,
     }
 
 
@@ -427,7 +529,7 @@ def _mask_quality_error(
     debug_role: str | None = None,
     mask_diagnostics: dict[str, object] | None = None,
     roi_diagnostics: dict[str, object] | None = None,
-) -> dict[str, str] | None:
+) -> dict[str, object] | None:
     alpha_mask = mask.convert("L")
     histogram = alpha_mask.histogram()
     foreground_pixels = sum(histogram[1:])
@@ -451,6 +553,7 @@ def _mask_quality_error(
                 "远程 AI 识别结果异常，未覆盖服饰主体，"
                 "请调整 AI_LIGHTWEIGHT_CLOTHING_LABELS 或放宽后处理参数，或回退传统识别。"
             ),
+            "empty_mask",
         )
 
     left, top, right, bottom = bbox
@@ -497,6 +600,25 @@ def _mask_quality_error(
         target_roi_diagnostics.get("partialCoverageRisk")
     )
     low_coverage_reason = target_roi_diagnostics.get("lowCoverageReason")
+    clip_diagnostics = target_roi_diagnostics.get("clipDiagnostics") or {}
+    clip_context_reasons = []
+    candidate_context_reasons = []
+
+    if float(clip_diagnostics.get("preclipOverflowRatio") or 0.0) > 0:
+        clip_context_reasons.append("preclip_overflow")
+
+    if bool(clip_diagnostics.get("postclipBoundaryCreated")):
+        clip_context_reasons.append("postclip_boundary_contact")
+
+    if str((mask_diagnostics or {}).get("selectedReason") or "").startswith(
+        "all_candidates_rejected"
+    ):
+        candidate_context_reasons.append("all_candidates_rejected")
+
+    diagnostic_context_reasons = [
+        *candidate_context_reasons,
+        *clip_context_reasons,
+    ]
 
     if is_target_with_roi and roi_likely_too_wide:
         return _quality_failure(
@@ -508,6 +630,8 @@ def _mask_quality_error(
                 f" selectedBboxAreaRatio={selected_area_ratio:.4f}"
                 f" touchesBorder={selected_touches_border}"
             ),
+            "roi_too_wide",
+            ["roi_too_wide", *diagnostic_context_reasons],
         )
 
     if is_target_with_roi and (
@@ -516,6 +640,20 @@ def _mask_quality_error(
         or selected_fill_ratio < 0.42
         or (touches_roi_left_or_right and bbox_width_ratio > 0.80)
     ):
+        low_confidence_gate_reasons = []
+
+        if selected_touches_border and selected_width_ratio > 0.80:
+            low_confidence_gate_reasons.append("roi_boundary_contact")
+
+        if selected_area_ratio > 0.65:
+            low_confidence_gate_reasons.append("bbox_area_too_large")
+
+        if selected_fill_ratio < 0.42:
+            low_confidence_gate_reasons.extend(["low_fill_ratio", "sparse_candidate"])
+
+        if touches_roi_left_or_right and bbox_width_ratio > 0.80:
+            low_confidence_gate_reasons.append("postclip_boundary_contact")
+
         return _quality_failure(
             "low_confidence",
             (
@@ -527,6 +665,8 @@ def _mask_quality_error(
                 f" selectedFillRatio={selected_fill_ratio:.4f}"
                 f" touchesBorder={selected_touches_border}"
             ),
+            low_confidence_gate_reasons[0],
+            [*low_confidence_gate_reasons, *diagnostic_context_reasons],
         )
 
     if is_target_with_roi and partial_coverage_risk:
@@ -544,6 +684,8 @@ def _mask_quality_error(
                 f" touchesBorder={selected_touches_border}"
                 f" reason={low_coverage_reason or 'partial_roi_coverage'}"
             ),
+            "partial",
+            ["partial", *diagnostic_context_reasons],
         )
 
     if is_target_with_roi and (
@@ -554,6 +696,26 @@ def _mask_quality_error(
         or (selected_foreground_ratio > 0.50 and selected_touches_border)
         or selected_candidate.get("rejectedReason") == "roi_over_coverage"
     ):
+        over_coverage_reasons = []
+
+        if full_bbox_width_ratio >= 0.95:
+            over_coverage_reasons.append("full_bbox_width_over_0.95")
+
+        if full_foreground_ratio > 0.40 and touches_image_border:
+            over_coverage_reasons.append("full_foreground_border_contact")
+
+        if selected_width_ratio >= 0.96 and selected_touches_border:
+            over_coverage_reasons.append("roi_boundary_contact")
+
+        if selected_area_ratio >= 0.80:
+            over_coverage_reasons.append("bbox_area_too_large")
+
+        if selected_foreground_ratio > 0.50 and selected_touches_border:
+            over_coverage_reasons.append("selected_foreground_border_contact")
+
+        if selected_candidate.get("rejectedReason") == "roi_over_coverage":
+            over_coverage_reasons.append("over_coverage")
+
         return _quality_failure(
             "over_coverage",
             (
@@ -564,6 +726,8 @@ def _mask_quality_error(
                 f" selectedBboxAreaRatio={selected_area_ratio:.4f}"
                 f" touchesBorder={selected_touches_border or touches_image_border}"
             ),
+            "over_coverage",
+            ["over_coverage", *over_coverage_reasons, *diagnostic_context_reasons],
         )
 
     if is_target_without_roi and (
@@ -578,6 +742,7 @@ def _mask_quality_error(
                 f" foregroundRatio={ratio:.4f} bboxAreaRatio={bbox_area_ratio:.4f}"
                 f" bboxWidthRatio={bbox_width_ratio:.4f} bboxHeightRatio={bbox_height_ratio:.4f}"
             ),
+            "partial",
         )
 
     if is_target_with_roi and (
@@ -592,6 +757,8 @@ def _mask_quality_error(
                 f" foregroundRatio={ratio:.4f} bboxAreaRatio={bbox_area_ratio:.4f}"
                 f" bboxWidthRatio={bbox_width_ratio:.4f} bboxHeightRatio={bbox_height_ratio:.4f}"
             ),
+            "partial",
+            ["partial", *diagnostic_context_reasons],
         )
 
     has_reasonable_partial_body = (
@@ -611,6 +778,8 @@ def _mask_quality_error(
                 "请调整 AI_LIGHTWEIGHT_CLOTHING_LABELS 或放宽后处理参数，或回退传统识别。"
                 f" foregroundRatio={ratio:.4f} bboxAreaRatio={bbox_area_ratio:.4f}"
             ),
+            "low_coverage",
+            ["low_coverage", *diagnostic_context_reasons],
         )
 
     if bbox_width / max(1, expected_width) < MIN_BBOX_EDGE_RATIO or bbox_height / max(1, expected_height) < MIN_BBOX_EDGE_RATIO:
@@ -621,6 +790,8 @@ def _mask_quality_error(
                 "请调整 AI_LIGHTWEIGHT_CLOTHING_LABELS 或放宽后处理参数，或回退传统识别。"
                 f" bbox={bbox}"
             ),
+            "bbox_too_small",
+            ["bbox_too_small", *diagnostic_context_reasons],
         )
 
     top_band_bottom = (
@@ -646,6 +817,8 @@ def _mask_quality_error(
                 "请扩大/清除 ROI、调整 AI_LIGHTWEIGHT_CLOTHING_LABELS，或回退传统识别。"
                 f" topForegroundRatio={top_foreground_ratio:.4f}"
             ),
+            "top_leakage",
+            ["top_leakage", *diagnostic_context_reasons],
         )
 
     return None
@@ -779,14 +952,27 @@ class LightweightSegmenter(BaseSegmenter):
         }
 
         postprocess_started_at = perf_counter()
+        clip_diagnostics: dict[str, object] | None = None
+
         if inference_roi:
             _save_api_crop_mask_debug_image(raw_mask, segment_input, inference_roi)
-            raw_mask = _paste_crop_mask_to_full_image(raw_mask, image_width, image_height, inference_roi)
-            mask = postprocess_mask(
+            preclip_mask = _paste_crop_mask_to_full_image(
                 raw_mask,
                 image_width,
                 image_height,
+                inference_roi,
+            )
+            mask = postprocess_mask(
+                preclip_mask,
+                image_width,
+                image_height,
                 roi=requested_roi,
+            )
+            clip_diagnostics = _get_preclip_postclip_diagnostics(
+                preclip_mask,
+                mask,
+                requested_roi,
+                inference_roi,
             )
         else:
             mask = postprocess_mask(
@@ -807,6 +993,11 @@ class LightweightSegmenter(BaseSegmenter):
             segment_input.debug_role,
             mask_diagnostics,
         )
+
+        if clip_diagnostics:
+            roi_diagnostics["clipDiagnostics"] = clip_diagnostics
+            extra_debug["clipDiagnostics"] = clip_diagnostics
+
         extra_debug["roiDiagnostics"] = roi_diagnostics
         quality_error = _mask_quality_error(
             mask,
@@ -818,12 +1009,18 @@ class LightweightSegmenter(BaseSegmenter):
         )
 
         if quality_error:
+            roi_diagnostics["finalQualityGate"] = quality_error["gate"]
+            roi_diagnostics["finalQualityReason"] = quality_error["reason"]
+            roi_diagnostics["qualityGateReasons"] = quality_error["reasons"]
+            extra_debug["finalQualityGate"] = quality_error["gate"]
+            extra_debug["finalQualityReason"] = quality_error["reason"]
+            extra_debug["qualityGateReasons"] = quality_error["reasons"]
             _save_api_return_debug_mask(
                 mask,
                 segment_input,
-                quality_error["message"],
+                str(quality_error["message"]),
                 False,
-                quality_error["quality"],
+                str(quality_error["quality"]),
                 extra_debug,
             )
             print(
@@ -832,11 +1029,17 @@ class LightweightSegmenter(BaseSegmenter):
             )
             return SegmentResult(
                 diagnostics=roi_diagnostics,
-                message=quality_error["message"],
-                quality=quality_error["quality"],
+                message=str(quality_error["message"]),
+                quality=str(quality_error["quality"]),
                 success=False,
             )
 
+        roi_diagnostics["finalQualityGate"] = "passed"
+        roi_diagnostics["finalQualityReason"] = "all existing quality gates passed"
+        roi_diagnostics["qualityGateReasons"] = []
+        extra_debug["finalQualityGate"] = "passed"
+        extra_debug["finalQualityReason"] = "all existing quality gates passed"
+        extra_debug["qualityGateReasons"] = []
         _save_api_return_debug_mask(mask, segment_input, "lightweight ONNX mask", True, extra_debug=extra_debug)
         print(
             f"[ai-server] total ms={(perf_counter() - segment_started_at) * 1000:.2f}",
