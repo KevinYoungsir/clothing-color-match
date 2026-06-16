@@ -191,6 +191,7 @@ def write_summary_json(
         "actualQuality": actual_quality,
         "actualSuccess": result.success,
         "bbox": result_summary.get("bbox"),
+        "boundaryContactSource": roi_diagnostics.get("boundaryContactSource"),
         "bestCandidateAfterReject": candidate_summary.get("bestCandidateAfterReject"),
         "bestCandidateBeforeReject": candidate_summary.get("bestCandidateBeforeReject"),
         "candidateBboxAreaRatio": candidate_summary.get("candidateBboxAreaRatio"),
@@ -220,6 +221,13 @@ def write_summary_json(
             actual_quality,
         ),
         "postclipBoundaryCreated": clip_diagnostics.get("postclipBoundaryCreated"),
+        "postclipBoundaryIgnored": roi_diagnostics.get("postclipBoundaryIgnored"),
+        "postclipBoundaryIgnoreReason": roi_diagnostics.get(
+            "postclipBoundaryIgnoreReason"
+        ),
+        "postclipBoundaryStillRejectedReason": roi_diagnostics.get(
+            "postclipBoundaryStillRejectedReason"
+        ),
         "postclipMaskArea": clip_diagnostics.get("postclipMaskArea"),
         "postclipMaskBbox": clip_diagnostics.get("postclipMaskBbox"),
         "postclipTouchesBottom": clip_diagnostics.get("postclipTouchesBottom"),
