@@ -1,152 +1,349 @@
 # Clothing Color Match Studio
 
-一个面向服装样品图、电商图、模特图和面料图的在线校色工具。项目目标是在浏览器内完成服装颜色匹配：上传标准图作为参考，只调整样品图中衣服蒙版区域的颜色，同时尽量保留纹理、褶皱、图案、光影和明暗关系。
+Clothing Color Match Studio is a garment color calibration tool for product photos, sample photos, hanger shots, model photos, and fabric/detail images. The goal is to match a target garment to a reference garment color while preserving texture, folds, lighting, patterns, shadows, and fabric detail.
 
-## 项目定位
+The current project is no longer a pure frontend MVP. It includes a React/Vite frontend and an optional FastAPI AI mask server with a lightweight ONNX garment segmentation path. The frontend can still run without the AI server by using manual masks or safe traditional fallback paths, but the current remote-AI workflow is designed around the FastAPI `/segment-garment` service.
 
-Clothing Color Match Studio 是一个前端优先的 MVP 项目，适合本地运行、团队演示，以及部署到 GitHub Pages、Vercel 或 Netlify。当前版本不依赖后端服务，核心图像处理在浏览器 Canvas 中完成。
+## Project Overview
 
-## 功能介绍
+- Upload a reference image and define the reference garment region.
+- Upload one or more target garment images.
+- Generate or edit a target mask using manual drawing, traditional segmentation, or remote AI segmentation.
+- Apply Lab-based color transfer only inside valid garment masks.
+- Block unreliable AI masks before they enter color transfer.
+- Export a single image or batch ZIP in original size, 2K, or 4K.
 
-- 标准图上传：上传一张标准图作为校色参考。
-- 标准图衣服参考区域选择：使用画笔在标准图上选择衣服取色区域，避免背景、皮肤、阴影污染参考色。
-- 样品图批量上传：支持批量上传 JPG、PNG、WebP 样品图。
-- 样品图衣服蒙版编辑：支持画笔、橡皮擦、画笔大小、透明度、显示/隐藏、撤销、重做和清空蒙版。
-- Lab 自动校色：基于标准图 referenceMask 和样品图 targetMask，在 Lab 色彩空间中主要迁移 a/b 通道，并保留目标图 L 通道。
-- 人工调整：支持亮度、对比度、饱和度、色相、曝光、阴影、高光、白平衡、色温、校色强度和纹理保留强度。
-- 前后对比：支持单图预览、左右对比、拖动分割线对比、按住空格临时查看原图，以及放大查看细节。
-- 单张下载：导出当前选中样品图的最终处理结果。
-- 批量 ZIP 下载：批量处理有蒙版的样品图，并打包为 ZIP；缺少蒙版的图片会被跳过并显示状态。
-- 原尺寸 / 2K / 4K 导出：原尺寸保持图片原始宽高，2K 长边为 2048px，4K 长边为 4096px，导出时保持原始比例。
+## Current Architecture
 
-## 技术栈
+```txt
+React / Vite / TypeScript frontend
+  -> Canvas preview, ROI/mask editing, Lab color transfer, batch export
+  -> Remote AI provider via VITE_AI_SEGMENTATION_API
 
-- React
-- Vite
-- TypeScript
-- Tailwind CSS
-- Canvas API
-- 浏览器端 ImageData 像素处理
-- 项目内置 simpleZip ZIP 生成器
+FastAPI ai-server
+  -> /health
+  -> /segment-garment
+  -> Pluggable segmenters: mock, lightweight ONNX, sam2 placeholder
+  -> ROI-first inference, postprocess, and mask quality gates
 
-## 本地运行方法
+Local model files
+  -> ai-server/models/model.onnx
+  -> ignored by Git
+```
+
+The current stable safety baseline is documented around `stable-frontend-color-transfer-safety-20260616`.
+
+## Features
+
+- Reference image upload and reference mask selection.
+- Target image batch upload with per-image mask state.
+- Manual mask editing with brush, eraser, undo, redo, clear, opacity, and feather controls.
+- Remote AI garment segmentation through the FastAPI server.
+- Lightweight ONNX segmentation with configurable labels, input size, normalization, thresholding, gamma, blur, ROI-first inference, and candidate scoring.
+- ROI / promptBox support for target masks.
+- Safety gates for `roi_too_wide`, `over_coverage`, `partial`, `low_confidence`, sparse candidates, low fill ratio, and risky boundary contact.
+- Target remote-AI failures do not silently enter unsafe traditional fallback.
+- ROI / mask changes clear stale `processedImages` / `adjustedImages` results before export reuse.
+- Lab color transfer that primarily migrates a/b color channels and preserves target luminance/texture.
+- Manual image adjustments for brightness, contrast, saturation, hue, exposure, shadows, highlights, white balance, color temperature, color strength, and texture preservation.
+- Single, left/right, and split comparison preview modes.
+- Single image download.
+- Batch ZIP download.
+- Original / 2K / 4K export with aspect-ratio preservation.
+
+## Frontend Setup
+
+Install frontend dependencies:
 
 ```bash
 npm install
+```
+
+Create a local frontend environment file when using the remote AI server:
+
+```txt
+VITE_AI_SEGMENTATION_API=http://localhost:8000/segment-garment
+VITE_AI_SEGMENTATION_TIMEOUT_MS=60000
+```
+
+Run the frontend:
+
+```bash
 npm run dev
 ```
 
-启动后打开终端输出中的本地地址，通常是：
+The Vite URL is usually:
 
 ```txt
 http://localhost:5173
 ```
 
-## 构建方法
+Restart `npm run dev` after changing `.env` or `.env.local`.
 
-```bash
-npm run build
+## Backend AI Server Setup
+
+The backend lives in `ai-server/` and is a FastAPI service.
+
+Create and activate a Python 3.11 or 3.12 virtual environment:
+
+```powershell
+cd "D:\Color Calibration\ai-server"
+py -3.12 -m venv .venv
+.venv\Scripts\activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
 ```
 
-构建产物会输出到 `dist/`。本地预览生产构建：
+For real lightweight ONNX inference, install the optional lightweight dependency set:
 
-```bash
-npm run preview
+```powershell
+pip install -r requirements-lightweight.txt
 ```
 
-## 导出验收方法
+Start the AI server in lightweight mode:
 
-项目包含 Task 07 的导出专项验收脚本，用于验证 ZIP 文件、文件命名、原尺寸、2K、4K 和比例保持逻辑：
-
-```bash
-npm run verify:export
+```powershell
+$env:AI_SEGMENTER="lightweight"
+$env:AI_LIGHTWEIGHT_MODEL_PATH="models\model.onnx"
+$env:AI_LIGHTWEIGHT_CLOTHING_LABELS="4,5,6,7"
+$env:AI_LIGHTWEIGHT_INPUT_SIZE="512"
+$env:AI_LIGHTWEIGHT_TARGET_NORMALIZATION="imagenet"
+uvicorn main:app --reload --port 8000
 ```
 
-推荐在提交前运行：
+Check the server:
 
-```bash
-npm run build
-npm run verify:export
+```powershell
+curl.exe http://localhost:8000/health
 ```
 
-## 使用流程
+`GET /segment-garment` in a browser returns Method Not Allowed because the endpoint expects `POST` image uploads.
 
-1. 上传标准图。
-2. 切换到标准图取色区域，在衣服区域绘制 referenceMask。
-3. 批量上传待校色样品图。
-4. 选择样品图，在衣服区域绘制 targetMask。
-5. 点击自动校色，预览 Lab 校色结果。
-6. 根据需要使用人工调整面板微调颜色和明暗。
-7. 使用前后对比检查纹理、褶皱、图案和光影是否保留。
-8. 选择原尺寸、2K 或 4K。
-9. 单张下载当前图片，或批量下载 ZIP。
+## Model Setup
 
-## 部署方法
+Real model files are not included in the repository.
 
-### Vercel
-
-1. 将项目推送到 GitHub。
-2. 在 Vercel 中导入该仓库。
-3. Framework Preset 选择 `Vite`。
-4. Build Command 使用 `npm run build`。
-5. Output Directory 使用 `dist`。
-6. 点击 Deploy。
-
-### Netlify
-
-1. 将项目推送到 GitHub。
-2. 在 Netlify 中选择 Add new site，并连接该仓库。
-3. Build command 使用 `npm run build`。
-4. Publish directory 使用 `dist`。
-5. 点击 Deploy site。
-
-### GitHub Pages
-
-推荐使用 GitHub Actions 部署 Vite 构建产物：
-
-1. 将项目推送到 GitHub。
-2. 在仓库 Settings > Pages 中选择 GitHub Actions。
-3. 添加工作流：安装依赖、运行 `npm run build`、上传并部署 `dist/`。
-4. 如果部署到仓库子路径，例如 `https://user.github.io/repo-name/`，需要根据仓库路径配置 Vite `base`，否则静态资源可能无法加载。
-
-也可以手动运行 `npm run build`，再将 `dist/` 内容发布到静态站点托管服务。
-
-## 当前 MVP 限制
-
-- 当前主要导出 JPG，暂未提供 PNG/WebP 导出选项。
-- 当前 ZIP 使用项目内置 `simpleZip` 实现，未接入 JSZip 依赖。
-- 大图批量处理全部在浏览器主线程中完成，可能有性能和内存压力。
-- 当前服装区域需要手动绘制蒙版，暂未接入 AI 自动分割。
-- 当前不包含项目保存、历史工程恢复、云端存储或多人协作能力。
-- 如果原图小于 2K/4K 目标尺寸，可以放大导出，但放大不会增加真实细节。
-
-## 后续开发计划
-
-- 引入 Web Worker，将批量处理和大图像素计算移出主线程。
-- 可选接入 JSZip，替换当前内置 ZIP 生成器。
-- 增加 AI 服装分割能力，降低手动绘制蒙版成本。
-- 支持项目保存和恢复，保留图片、蒙版、校色参数和导出设置。
-- 扩展 PNG/WebP 导出格式。
-- 增加批量处理重试、取消、进度条和更详细的错误报告。
-- 优化超大图处理性能，并探索后端或 GPU 批量处理方案。
-
-## 项目结构
+Recommended local model path:
 
 ```txt
-src/
-  components/       UI 组件
-  core/             图像处理、校色、调整、导出和 ZIP 逻辑
-  types/            共享类型定义
-  App.tsx           页面状态和功能编排
-scripts/
-  verify-export.mjs 导出和 ZIP 专项验收脚本
+ai-server/models/model.onnx
 ```
 
-## 验收清单
+You can also keep the model outside the repo and point to it with:
 
-- `npm run build` 通过。
-- `npm run verify:export` 通过。
-- 标准图 referenceMask 已绘制后才能自动校色。
-- 样品图 targetMask 控制校色、人工调整和导出处理范围。
-- ZIP 可以下载并解压。
-- 2K/4K 导出长边正确，图片比例不变形。
+```powershell
+$env:AI_LIGHTWEIGHT_MODEL_PATH="D:\path\to\model.onnx"
+```
+
+Model files must not be committed. Keep these local:
+
+- `ai-server/models/`
+- `*.onnx`
+- `*.pt`
+- `*.pth`
+- `*.safetensors`
+- `*.ckpt`
+- `*.engine`
+- `*.bin`
+
+## Environment Variables
+
+Frontend:
+
+```txt
+VITE_AI_SEGMENTATION_API=http://localhost:8000/segment-garment
+VITE_AI_SEGMENTATION_TIMEOUT_MS=60000
+```
+
+Backend:
+
+```powershell
+$env:AI_SEGMENTER="lightweight"
+$env:AI_LIGHTWEIGHT_MODEL_PATH="models\model.onnx"
+$env:AI_LIGHTWEIGHT_CLOTHING_LABELS="4,5,6,7"
+$env:AI_LIGHTWEIGHT_INPUT_SIZE="512"
+$env:AI_LIGHTWEIGHT_MASK_THRESHOLD="0.55"
+$env:AI_LIGHTWEIGHT_MASK_GAMMA="1.4"
+$env:AI_LIGHTWEIGHT_MASK_BLUR="4"
+$env:AI_LIGHTWEIGHT_KEEP_COMPONENTS="2"
+$env:AI_LIGHTWEIGHT_MIN_COMPONENT_RATIO="0.002"
+$env:AI_LIGHTWEIGHT_TARGET_NORMALIZATION="imagenet"
+$env:AI_MASK_ROI_PADDING_RATIO="0.08"
+```
+
+Optional debug output:
+
+```powershell
+$env:AI_DEBUG_SAVE_MASKS="1"
+```
+
+Debug files are written under `ai-server/debug/` and must remain untracked.
+
+## AI Mask, ROI, And Manual Mask Flow
+
+- Reference masks define the garment color source.
+- Target masks define where color transfer is allowed.
+- Manual masks are always available and are the safest correction path for hard cases.
+- Remote AI masks are requested through `VITE_AI_SEGMENTATION_API`.
+- Target requests carry `debugRole: "target"` and `sampleId`.
+- ROI / promptBox narrows target recognition and enables ROI-first inference in the backend.
+- Low-quality target masks are blocked with qualities such as `partial`, `low_confidence`, `over_coverage`, or `roi_too_wide`.
+- Blocked or failed target masks must not enter `colorTransfer`.
+- If a target mask is blocked, the user should adjust ROI or manually edit the mask.
+
+## Color Transfer Safety
+
+`colorTransfer` only operates on valid mask pixels in garment mode:
+
+- Missing target mask in non-full-image mode throws instead of processing the whole image.
+- Mask size mismatch throws.
+- Pixels with mask alpha / weight `0` are not modified.
+- Reference and target masks are checked before Lab transfer.
+- ROI / mask edits clear old processed and adjusted results so batch export does not reuse stale output.
+
+## Development Workflow
+
+Typical local remote-AI workflow uses two terminals.
+
+Backend terminal:
+
+```powershell
+cd "D:\Color Calibration\ai-server"
+.venv\Scripts\activate
+$env:AI_SEGMENTER="lightweight"
+$env:AI_LIGHTWEIGHT_MODEL_PATH="models\model.onnx"
+$env:AI_LIGHTWEIGHT_CLOTHING_LABELS="4,5,6,7"
+$env:AI_LIGHTWEIGHT_INPUT_SIZE="512"
+$env:AI_LIGHTWEIGHT_TARGET_NORMALIZATION="imagenet"
+uvicorn main:app --reload --port 8000
+```
+
+Frontend terminal:
+
+```powershell
+cd "D:\Color Calibration"
+npm run dev
+```
+
+Then open:
+
+```txt
+http://localhost:5173
+```
+
+## Validation Commands
+
+Frontend build:
+
+```bash
+npm run build
+```
+
+Export verification:
+
+```bash
+npm run verify:export
+```
+
+Backend syntax check:
+
+```powershell
+cd ai-server
+.venv\Scripts\python.exe -m py_compile main.py segmenters\lightweight_segmenter.py segmenters\onnx_utils.py
+```
+
+Backend environment and model checks:
+
+```powershell
+cd ai-server
+python scripts/check_environment.py
+python scripts/inspect_onnx_model.py --model-path "models\model.onnx"
+python scripts/verify_lightweight.py --model-path "models\model.onnx"
+```
+
+Real image mask verification:
+
+```powershell
+python scripts\verify_lightweight_image.py `
+  --model-path "models\model.onnx" `
+  --image-path "test-assets\sample-garment.jpg" `
+  --labels 4,5,6,7 `
+  --output "debug\lightweight-mask.png"
+```
+
+## Export Verification
+
+`npm run verify:export` checks:
+
+- Single download naming and JPEG output.
+- ZIP structure and filenames.
+- Missing-mask batch skip behavior.
+- Original export dimensions.
+- 2K long edge at `2048`.
+- 4K long edge at `4096`.
+- Aspect-ratio preservation.
+
+## Safety Notes
+
+- Do not weaken ROI safety gates to make a case pass.
+- Difficult cases may correctly return `partial`, `low_confidence`, `over_coverage`, or `roi_too_wide`.
+- A safe failure is preferable to an incorrect color transfer.
+- Hanger, metal clip, edge-touching, complex background, and closeup images still need human review when masks are visually ambiguous.
+- No-ROI success on high-risk images should be manually inspected before production export.
+- If a result looks wrong, edit the mask manually instead of forcing AI success.
+
+## Known Limitations
+
+- Full browser E2E with live FastAPI, real `model.onnx`, real uploads, ROI drawing, previews, and downloaded images still needs manual release verification.
+- The current model and label map are local assumptions; another model may require different labels or preprocessing.
+- The app does not include project save / restore, cloud storage, or collaboration.
+- Current export output is JPEG; PNG/WebP export options are not implemented.
+- Batch processing still runs in the browser and can have memory pressure on very large images.
+- 2K / 4K upscaling preserves aspect ratio but cannot create real detail beyond the source image.
+
+## Git Ignore / Do Not Commit
+
+Do not commit:
+
+- `.env.local`
+- `dist/`
+- `node_modules/`
+- `ai-server/.venv/`
+- `ai-server/models/`
+- `ai-server/test-assets/`
+- `ai-server/debug/`
+- `*.onnx`
+- `*.pt`
+- `*.pth`
+- `*.safetensors`
+- `*.ckpt`
+- `*.engine`
+- `*.bin`
+- `__pycache__/`
+- `*.pyc`
+
+## Release Acceptance Status
+
+Latest release acceptance checklist:
+
+- `docs/e2e-release-acceptance-checklist.md`
+
+Current validation baseline:
+
+- `npm run build`
+- `npm run verify:export`
+- Backend `py_compile` for key AI server files
+
+Before a release, also run a manual browser E2E pass with:
+
+1. Frontend on `http://localhost:5173`.
+2. FastAPI server on `http://localhost:8000`.
+3. Local ONNX model at `ai-server/models/model.onnx` or a configured external path.
+4. Representative white-background, hanger, closeup, edge-touching, and complex-background images.
+5. Manual inspection of masks, previews, and downloaded files.
+
+## Deployment
+
+The frontend can still be deployed as a Vite static app to Vercel, Netlify, or GitHub Pages. Remote AI segmentation requires a separately deployed FastAPI service and a configured `VITE_AI_SEGMENTATION_API`.
+
+For static-only deployments without the AI server, users can still use manual masks and safe traditional segmentation paths, but real ONNX remote-AI segmentation will not be available.
