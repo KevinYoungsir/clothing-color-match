@@ -100,7 +100,7 @@ const colorCorrectionScopeOptions: Array<{
   value: ColorCorrectionScope;
 }> = [
   {
-    description: "自动识别服装主体，只校色识别区域。",
+    description: "AI / 传统识别仅作为初始蒙版；识别不准时请用手动蒙版精修。",
     label: "智能识别服装",
     value: "auto-garment"
   },
@@ -110,7 +110,7 @@ const colorCorrectionScopeOptions: Array<{
     value: "full-image"
   },
   {
-    description: "只使用你手动绘制的样品蒙版。",
+    description: "只使用你手动绘制的样品蒙版，作为 AI 识别不准时的最终兜底。",
     label: "手动蒙版",
     value: "manual-mask"
   }
@@ -154,7 +154,7 @@ const segmentationProviderOptions: Array<{
     value: "ai-placeholder"
   },
   {
-    description: "调用 VITE_AI_SEGMENTATION_API 配置的远程服务；失败时回退传统识别。",
+    description: "调用远程 AI 服务生成初始蒙版；低质量结果会被阻断，请用手动蒙版兜底。",
     label: "远程 AI 识别",
     value: "remote-ai"
   }
@@ -286,8 +286,8 @@ export function AdjustmentPanel({
             {isFullImageScope
               ? "整张样品图模式会把整张样品图向标准图颜色匹配，不需要样品蒙版。"
               : isManualMaskScope
-                ? "手动蒙版模式只校色你绘制的样品蒙版区域，适合精修复杂背景图片。"
-                : "上传标准图和样品图后可直接自动识别并校色。自动识别适合白底图、透明底图、服装主体清晰的图片；如果识别不准确，可用画笔和橡皮擦修正。"}
+                ? "手动蒙版模式只校色你绘制的样品蒙版区域，适合精修挂拍、衣架、金属夹具、边缘贴图和复杂背景图片。"
+                : "AI 识别仅作为辅助。挂拍、衣架、金属夹具、边缘贴图等场景可能识别不准；如蒙版未完整覆盖服装或选中夹具/背景，请使用手动蒙版修正后再校色。"}
           </p>
 
           <div className="mt-3">
@@ -323,7 +323,7 @@ export function AdjustmentPanel({
             ) : null}
             {segmentationProviderType === "remote-ai" && isRemoteAiConfigured ? (
               <p className="mt-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">
-                将调用远程 AI 分割服务；请求失败时会自动回退到传统识别。
+                将调用远程 AI 分割服务生成初始蒙版；低质量或不可靠结果会被阻断。挂拍、衣架、金属夹具、边缘贴图等高风险图请以手动蒙版作为最终校色范围。
               </p>
             ) : null}
           </div>
@@ -510,7 +510,7 @@ export function AdjustmentPanel({
           ) : null}
 
           {autoMaskNotice ? (
-            <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+            <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium leading-5 text-amber-800">
               {autoMaskNotice}
             </p>
           ) : null}
@@ -692,6 +692,12 @@ export function AdjustmentPanel({
               </button>
             ))}
           </div>
+
+          {maskEditMode === "target" && !isFullImageScope ? (
+            <p className="mt-3 rounded-md border border-teal-200 bg-teal-50 px-3 py-2 text-xs leading-5 text-teal-800">
+              AI 识别不准时，请切换到样品蒙版，用画笔添加服装区域、用橡皮擦去掉衣架/夹具/背景；手动蒙版会作为最终校色范围。
+            </p>
+          ) : null}
 
           <div className="mt-3 grid grid-cols-2 rounded-md border border-zinc-200 bg-zinc-50 p-1">
             {(["brush", "eraser"] as const).map((tool) => (
