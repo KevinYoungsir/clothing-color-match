@@ -88,6 +88,9 @@ const colorMatchModePresets: Record<ColorMatchMode, {
   }
 };
 
+const manualMaskFallbackNotice =
+  "AI 识别仅作为辅助。挂拍、衣架、金属夹具、边缘贴图等场景可能识别不准，请使用手动蒙版精修校色区域。";
+
 export default function App() {
   const [referenceImage, setReferenceImage] = useState<UploadedImage | null>(null);
   const [sampleImages, setSampleImages] = useState<UploadedImage[]>([]);
@@ -856,7 +859,7 @@ export default function App() {
     setIsMaskEditingActive(false);
     setIsMaskVisible(false);
     setIsRoiSelectionActive(true);
-    setAutoMaskNotice("请在画布上拖拽矩形框，圈出服装主体区域。");
+    setAutoMaskNotice("请在画布上拖拽矩形框，只圈出服装主体区域；如包含衣架、金属夹具或背景，请改用手动蒙版精修。");
   }
 
   function handleGarmentRoiChange(roi: GarmentRoi) {
@@ -879,7 +882,7 @@ export default function App() {
     invalidateAutoTargetMask(selectedSample);
     setIsRoiSelectionActive(false);
     setMaskEditMode("target");
-    setAutoMaskNotice("已保存服装框选区域，自动识别将只在框选范围内运行。");
+    setAutoMaskNotice("已保存服装框选区域，自动识别将只在框选范围内运行；如蒙版不完整或选中夹具/背景，请使用手动蒙版修正。");
   }
 
   function handleClearGarmentRoi() {
@@ -1000,7 +1003,7 @@ export default function App() {
     if (providerType === "remote-ai") {
       setAutoMaskNotice(
         isRemoteAiConfigured
-          ? "远程 AI 识别已启用；请求失败时会自动回退到传统识别。"
+          ? "远程 AI 识别已启用；AI 仅作为辅助，低质量结果会被阻断。挂拍、衣架、金属夹具或边缘贴图场景请用手动蒙版兜底。"
           : "远程 AI 服务未配置，将使用传统识别。"
       );
       return;
@@ -1047,6 +1050,7 @@ export default function App() {
       setMaskEditMode("target");
       setIsMaskEditingActive(true);
       setIsMaskVisible(true);
+      setAutoMaskNotice("已切换到手动蒙版模式。AI 识别不准时，请用画笔和橡皮擦精修最终校色范围。");
       return;
     }
 
@@ -1057,7 +1061,7 @@ export default function App() {
 
   function ensureMaskConfidence(label: string, result: SegmentationResult) {
     if (!hasMaskPixels(result.mask)) {
-      throw new Error(`${label}自动识别失败，请点击编辑校色范围手动修正。`);
+      throw new Error(`${label}自动识别失败，请点击编辑校色范围，使用手动蒙版修正后再校色。`);
     }
 
     const hasUnsafeCoverage = result.coverageRatio > 0.65;
@@ -1066,7 +1070,7 @@ export default function App() {
       (result.coverageRatio > 0.5 && result.touchesBorderRatio > 0.16);
 
     if (result.confidence < 0.45 || hasUnsafeCoverage || hasUnsafeBorderTouch) {
-      throw new Error(`${label}自动识别不确定，请点击编辑校色范围手动修正。`);
+      throw new Error(`${label}自动识别不确定，请点击编辑校色范围，使用手动蒙版修正后再校色。`);
     }
   }
 
@@ -1080,7 +1084,7 @@ export default function App() {
     setIsMaskEditingActive(true);
     setIsRoiSelectionActive(false);
     setIsMaskVisible(true);
-    setAutoMaskNotice(message);
+    setAutoMaskNotice(`${message} ${manualMaskFallbackNotice}`);
   }
 
   async function ensureReferenceMask(referenceImageData: ImageData) {
@@ -1186,7 +1190,7 @@ export default function App() {
       setMaskEditMode("target");
       setIsMaskEditingActive(true);
       setIsMaskVisible(true);
-      setAutoMaskNotice("手动蒙版模式请使用画笔绘制样品图校色范围。");
+      setAutoMaskNotice("手动蒙版模式请使用画笔绘制样品图校色范围；这是 AI 识别不准时的最终兜底方式。");
       return;
     }
 
@@ -1269,7 +1273,7 @@ export default function App() {
       setIsMaskEditingActive(true);
       setIsRoiSelectionActive(false);
       setIsMaskVisible(true);
-      setAutoMaskNotice("已切换到手动蒙版模式，请绘制样品图校色范围。");
+      setAutoMaskNotice("已切换到手动蒙版模式，请绘制样品图校色范围；手动蒙版将作为最终校色范围。");
       setProcessedImages({});
       setAdjustedImages({});
       return;
