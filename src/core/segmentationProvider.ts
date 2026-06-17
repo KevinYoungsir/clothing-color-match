@@ -605,8 +605,9 @@ export async function runGarmentSegmentation(
     return await fetchRemoteAiMask(input, remoteAiEndpoint);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "";
+    const debugRole = getDebugRole(input);
     const isRemoteMaskQualityFailure =
-      input.debugRole === "target" &&
+      debugRole === "target" &&
       /仅识别到局部服装区域|未覆盖服饰主体|识别结果异常|识别范围过大|框选区域过宽|蒙版不可靠|样品图标识缺失|mask bbox|未能可靠识别服装主体|partial|low_coverage|low_confidence|over_coverage|roi_too_wide/.test(
         errorMessage
       );
