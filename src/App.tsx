@@ -539,14 +539,7 @@ export default function App() {
     setIsMaskVisible(true);
     setColorTransferError(null);
     setAutoMaskNotice(null);
-    setProcessedImages((currentImages) => {
-      const { [selectedSample.id]: _removedImage, ...remainingImages } = currentImages;
-      return remainingImages;
-    });
-    setAdjustedImages((currentImages) => {
-      const { [selectedSample.id]: _removedImage, ...remainingImages } = currentImages;
-      return remainingImages;
-    });
+    clearSampleDerivedResult(selectedSample.id);
     setAdjustmentError(null);
   }
 
@@ -624,14 +617,7 @@ export default function App() {
     }));
     setColorTransferError(null);
     setAutoMaskNotice(null);
-    setProcessedImages((currentImages) => {
-      const { [selectedSampleId]: _removedImage, ...remainingImages } = currentImages;
-      return remainingImages;
-    });
-    setAdjustedImages((currentImages) => {
-      const { [selectedSampleId]: _removedImage, ...remainingImages } = currentImages;
-      return remainingImages;
-    });
+    clearSampleDerivedResult(selectedSampleId);
     setAdjustmentError(null);
   }
 
@@ -668,14 +654,7 @@ export default function App() {
     }));
     setColorTransferError(null);
     setAutoMaskNotice(null);
-    setProcessedImages((currentImages) => {
-      const { [selectedSampleId]: _removedImage, ...remainingImages } = currentImages;
-      return remainingImages;
-    });
-    setAdjustedImages((currentImages) => {
-      const { [selectedSampleId]: _removedImage, ...remainingImages } = currentImages;
-      return remainingImages;
-    });
+    clearSampleDerivedResult(selectedSampleId);
     setAdjustmentError(null);
   }
 
@@ -712,14 +691,7 @@ export default function App() {
     }));
     setColorTransferError(null);
     setAutoMaskNotice(null);
-    setProcessedImages((currentImages) => {
-      const { [selectedSampleId]: _removedImage, ...remainingImages } = currentImages;
-      return remainingImages;
-    });
-    setAdjustedImages((currentImages) => {
-      const { [selectedSampleId]: _removedImage, ...remainingImages } = currentImages;
-      return remainingImages;
-    });
+    clearSampleDerivedResult(selectedSampleId);
     setAdjustmentError(null);
   }
 
@@ -795,7 +767,52 @@ export default function App() {
     return null;
   }
 
+  function clearSampleDerivedResult(imageId: string) {
+    setProcessedImages((currentImages) => {
+      const { [imageId]: _removedImage, ...remainingImages } = currentImages;
+      return remainingImages;
+    });
+    setAdjustedImages((currentImages) => {
+      const { [imageId]: _removedImage, ...remainingImages } = currentImages;
+      return remainingImages;
+    });
+    setColorDifferenceResults((currentResults) => {
+      const { [imageId]: _removedResult, ...remainingResults } = currentResults;
+      return remainingResults;
+    });
+    setSampleProcessStatuses((currentStatuses) => ({
+      ...currentStatuses,
+      [imageId]: selectedSampleIdSet.has(imageId) ? "selected" : "idle"
+    }));
+    setSampleProcessMessages((currentMessages) => {
+      const { [imageId]: _removedMessage, ...remainingMessages } = currentMessages;
+      return remainingMessages;
+    });
+    setBatchStatuses((currentStatuses) => {
+      const { [imageId]: _removedStatus, ...remainingStatuses } = currentStatuses;
+      return remainingStatuses;
+    });
+  }
+
+  function invalidateAutoTargetMask(image: UploadedImage) {
+    clearSampleDerivedResult(image.id);
+
+    if (sampleMaskStatuses[image.id] === "manual") {
+      return;
+    }
+
+    setMaskStates((currentMasks) => ({
+      ...currentMasks,
+      [image.id]: createMaskState(image.width, image.height)
+    }));
+    setSampleMaskStatuses((currentStatuses) => ({
+      ...currentStatuses,
+      [image.id]: "unrecognized"
+    }));
+  }
+
   function storeAutoTargetMask(image: UploadedImage, result: SegmentationResult) {
+    clearSampleDerivedResult(image.id);
     setMaskStates((currentMasks) => ({
       ...currentMasks,
       [image.id]: createAutoMaskState(result.mask, currentMasks[image.id])
@@ -859,6 +876,7 @@ export default function App() {
             [selectedSample.id]: "unrecognized"
           }
     );
+    invalidateAutoTargetMask(selectedSample);
     setIsRoiSelectionActive(false);
     setMaskEditMode("target");
     setAutoMaskNotice("已保存服装框选区域，自动识别将只在框选范围内运行。");
@@ -873,6 +891,11 @@ export default function App() {
       const { [selectedSampleId]: _removedRoi, ...remainingRois } = currentRois;
       return remainingRois;
     });
+    if (selectedSample) {
+      invalidateAutoTargetMask(selectedSample);
+    } else {
+      clearSampleDerivedResult(selectedSampleId);
+    }
     setIsRoiSelectionActive(false);
     setAutoMaskNotice("已清除当前样品图的服装框选区域。");
   }
@@ -1113,8 +1136,10 @@ export default function App() {
       throw new Error("样品图缺少手动蒙版，请点击编辑校色范围手动绘制。");
     }
 
+    clearSampleDerivedResult(sample.id);
     const autoMaskResult = await runGarmentSegmentation(
       {
+        debugRole: "target",
         imageData: targetImageData,
         mode: "garment",
         options: {
@@ -1209,8 +1234,10 @@ export default function App() {
         selectedSample.width,
         selectedSample.height
       );
+      clearSampleDerivedResult(selectedSample.id);
       const autoMaskResult = await runGarmentSegmentation(
         {
+          debugRole: "target",
           imageData: targetImageData,
           mode: "garment",
           options: {
