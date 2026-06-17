@@ -1,14 +1,14 @@
-# AI Segmentation Server Mock
+# AI Segmentation Server
 
-This optional FastAPI service is a skeleton for future SAM / SAM2 / garment segmentation integration. It does not include or download any AI model.
+This optional FastAPI service powers remote garment mask generation for the frontend. It includes a pluggable segmenter registry, a mock segmenter for local safety checks, a real lightweight ONNX adapter, and a SAM2 placeholder. It does not include, download, or commit any model file.
 
 ## Segmenter Architecture
 
 The server uses a small pluggable segmenter registry under `segmenters/`.
 
 - `segmenters/base.py` defines `SegmentInput`, `SegmentResult`, and `BaseSegmenter`.
-- `segmenters/mock_segmenter.py` implements the current ROI-based mock behavior.
-- `segmenters/lightweight_segmenter.py` reserves a future lightweight garment segmentation adapter.
+- `segmenters/mock_segmenter.py` implements the ROI-based mock behavior.
+- `segmenters/lightweight_segmenter.py` implements the guarded lightweight ONNX garment segmentation adapter.
 - `segmenters/sam2_segmenter.py` reserves a future high-precision SAM2 adapter.
 - `segmenters/registry.py` exposes `get_segmenter(name)`.
 
@@ -18,7 +18,7 @@ The default segmenter is `mock`. You can select it explicitly:
 $env:AI_SEGMENTER="mock"
 ```
 
-The `lightweight` segmenter contains a generic ONNX inference skeleton for a future small garment segmentation model:
+The `lightweight` segmenter contains the current generic ONNX inference adapter for a local garment segmentation model:
 
 ```powershell
 $env:AI_SEGMENTER="lightweight"
@@ -37,7 +37,7 @@ $env:AI_SAM2_CONFIG="path\to\sam2_config.yaml"
 
 If `AI_SAM2_CHECKPOINT` or `AI_SAM2_CONFIG` is missing, or either path does not exist, `/segment-garment` returns `success: false` with a clear message. It does not fall back to a full-image mask or generate a fake garment mask.
 
-Future implementations can add real `lightweight` or `sam2` inference without changing the frontend `/segment-garment` contract.
+Future implementations can add model-specific lightweight adapters or real `sam2` inference without changing the frontend `/segment-garment` contract.
 
 ## Mask Postprocessing
 
@@ -47,11 +47,11 @@ Future implementations can add real `lightweight` or `sam2` inference without ch
 - If a model returns a mask with a different size from the input image, the mask is resized safely with nearest-neighbor sampling.
 - If no `roi` or `promptBox` is provided, postprocessing does not create a new full-image mask.
 
-This keeps future lightweight or SAM/SAM2 segmenters from accidentally returning a whole-image garment mask when the user has provided a tighter garment region.
+This keeps lightweight or SAM/SAM2 segmenters from accidentally returning a whole-image garment mask when the user has provided a tighter garment region.
 
-## Future Real Model Dependencies
+## Real Model Dependencies
 
-Do not install heavyweight inference dependencies for the mock server. A future real lightweight segmenter may add dependencies such as `onnxruntime`, and a SAM/SAM2 segmenter may add PyTorch-related packages such as `torch`, `torchvision`, and `sam2`. Those should be introduced only with the real model integration task, and model files must not be committed to the repo.
+Do not install heavyweight inference dependencies for the mock server. The lightweight ONNX path uses optional dependencies such as `onnxruntime` and `numpy`. A future SAM/SAM2 segmenter may add PyTorch-related packages such as `torch`, `torchvision`, and `sam2`. Model files must not be committed to the repo.
 
 ## Python Version and Lightweight Dependencies
 
@@ -65,7 +65,7 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-When starting the future lightweight ONNX integration task, install the optional lightweight dependency set separately:
+When running lightweight ONNX inference, install the optional lightweight dependency set separately:
 
 ```powershell
 pip install -r requirements-lightweight.txt
@@ -85,9 +85,9 @@ python scripts/check_environment.py
 
 Missing lightweight dependencies are reported as informational warnings until you intentionally enable real lightweight ONNX inference.
 
-## Lightweight ONNX Inference Skeleton
+## Lightweight ONNX Inference
 
-The `lightweight` segmenter is a generic ONNX adapter, not a model-specific implementation yet. It:
+The `lightweight` segmenter is a generic ONNX adapter. It is guarded by quality gates and may still require model-specific labels or preprocessing for a new model. It:
 
 - Reads `AI_LIGHTWEIGHT_MODEL_PATH`.
 - Imports `onnxruntime` and `numpy` only when `AI_SEGMENTER=lightweight` is used.
@@ -166,7 +166,7 @@ You can inspect a local ONNX model contract before wiring it into the segmenter:
 python scripts/inspect_onnx_model.py --model-path "ai-server\models\garment.onnx"
 ```
 
-The inspector prints input/output names, shapes, types, provider information, and whether the current generic skeleton is likely compatible. It does not run image inference or generate a mask. The lightweight adapter supports static 4D NCHW / NHWC inputs and dynamic NCHW inputs that can run at `AI_LIGHTWEIGHT_INPUT_SIZE`. If the model needs custom normalization, a non-mask output, or different garment label ids, a model-specific follow-up may still be needed.
+The inspector prints input/output names, shapes, types, provider information, and whether the current generic adapter is likely compatible. It does not run image inference or generate a mask. The lightweight adapter supports static 4D NCHW / NHWC inputs and dynamic NCHW inputs that can run at `AI_LIGHTWEIGHT_INPUT_SIZE`. If the model needs custom normalization, a non-mask output, or different garment label ids, a model-specific follow-up may still be needed.
 
 To verify a missing model path explicitly:
 
@@ -345,7 +345,7 @@ $env:AI_SAM2_CHECKPOINT="path\to\sam2_checkpoint.pt"
 $env:AI_SAM2_CONFIG="path\to\sam2_config.yaml"
 ```
 
-The `sam2` segmenter is still a placeholder in the current codebase. The `lightweight` segmenter has a generic ONNX inference skeleton, but no model file is included.
+The `sam2` segmenter is still a placeholder in the current codebase. The `lightweight` segmenter has a generic ONNX inference adapter, but no model file is included.
 
 ## Setup
 
