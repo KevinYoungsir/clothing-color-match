@@ -427,7 +427,7 @@ This endpoint provides multimodal garment analysis suggestions separately from p
 - `image`: uploaded image file.
 - `role`: `source` or `target`.
 - `roi`: optional JSON `x/y/width/height`.
-- `provider`: `mock` (default) or `external`.
+- `provider`: `mock` (default), `external`, or `runninghub`.
 
 The deterministic `mock` provider needs no API Key. The `external` skeleton reads only backend environment variables:
 
@@ -441,9 +441,9 @@ $env:MULTIMODAL_AI_TIMEOUT_SECONDS="30"
 
 Never expose the Key through Vite variables or frontend code. This phase intentionally makes no external network request. Missing Key, timeout, invalid response, and disabled-provider paths return `success: false`, `recommendManualMask: true`, and `shouldApplyDirectlyToColorTransfer: false`. Continue with the local AI mask or manual mask.
 
-`provider=runninghub` adds a RunningHub-specific adapter skeleton. It reads these backend-only environment variables: `RUNNINGHUB_API_KEY`, `RUNNINGHUB_BASE_URL`, `RUNNINGHUB_WORKFLOW_ID`, `RUNNINGHUB_APP_ID`, `RUNNINGHUB_MODEL_TYPE`, `RUNNINGHUB_TIMEOUT_SECONDS`, `RUNNINGHUB_POLL_INTERVAL_SECONDS`, `RUNNINGHUB_MAX_POLL_ATTEMPTS`, `RUNNINGHUB_NODE_INFO_JSON`, and `RUNNINGHUB_RESULT_MODE`.
+`provider=runninghub` adds a RunningHub-specific submit/poll adapter. It reads these backend-only environment variables: `RUNNINGHUB_ENABLE_REAL_CALL`, `RUNNINGHUB_API_KEY`, `RUNNINGHUB_SUBMIT_ENDPOINT`, `RUNNINGHUB_POLL_ENDPOINT`, `RUNNINGHUB_WORKFLOW_ID`, `RUNNINGHUB_APP_ID`, `RUNNINGHUB_MODEL_TYPE`, `RUNNINGHUB_TIMEOUT_SECONDS`, `RUNNINGHUB_POLL_INTERVAL_SECONDS`, `RUNNINGHUB_MAX_POLL_ATTEMPTS`, `RUNNINGHUB_NODE_INFO_JSON`, and `RUNNINGHUB_RESULT_MODE`.
 
-The current adapter does not call RunningHub. Missing Key or workflow/app configuration returns a structured safe failure. Even with configuration present, the adapter remains `provider_disabled` until official submit/poll endpoints, payload mappings, and response samples are provided. Do not place a RunningHub Key in Vite, Electron, Git, documentation examples, or logs.
+Real calls are disabled by default. Only the exact value `RUNNINGHUB_ENABLE_REAL_CALL=true` permits submit/poll requests, after all required configuration passes validation. Missing Key, disabled calls, missing endpoints, missing workflow/app identifiers, invalid node mapping, HTTP errors, timeout, task failure, non-JSON, empty output, and parse errors return structured safe failures. Do not place a RunningHub Key in Vite, Electron, Git, documentation examples, or logs.
 
 ### `POST /segment-garment`
 

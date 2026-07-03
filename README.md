@@ -184,7 +184,7 @@ $env:MULTIMODAL_AI_TIMEOUT_SECONDS="30"
 
 Do not put `MULTIMODAL_AI_API_KEY` in Vite variables, frontend source, Git, or Electron resources. The current external provider performs no network request; missing or unavailable configuration returns a safe failure and directs the user to the local AI mask or manual mask.
 
-The optional `runninghub` provider is also a network-disabled adapter skeleton. It reads only backend `RUNNINGHUB_*` environment variables, including `RUNNINGHUB_API_KEY`, workflow/app identifiers, timeout, polling, node mapping, and result mode. No RunningHub Key belongs in frontend configuration, Electron resources, Git, README examples, or logs. Until official submit/poll endpoints and response samples are supplied, the adapter fails safely and directs users to the local AI mask or manual mask.
+The optional `runninghub` provider has a configuration-driven submit/poll adapter. Real network calls are disabled by default and require explicit `RUNNINGHUB_ENABLE_REAL_CALL=true` plus backend-only Key, submit/poll endpoints, workflow/app identifiers, and node input mapping. No RunningHub Key belongs in frontend configuration, Electron resources, Git, README examples, or logs. Missing or invalid configuration fails safely and directs users to the local AI mask or manual mask.
 
 Optional debug output:
 
