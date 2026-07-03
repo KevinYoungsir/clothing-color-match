@@ -1,6 +1,6 @@
 import type { GarmentRoi, UploadedImage } from "../types";
 
-export type MultimodalProviderType = "mock" | "external";
+export type MultimodalProviderType = "mock" | "external" | "runninghub";
 
 export type MultimodalAnalysisResult = {
   success: boolean;

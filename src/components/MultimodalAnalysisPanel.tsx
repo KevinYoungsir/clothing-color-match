@@ -23,7 +23,15 @@ const riskLabels: Record<string, string> = {
   api_timeout: "服务超时",
   invalid_provider_response: "返回格式异常",
   external_provider_disabled: "真实 provider 未启用",
-  external_provider_error: "服务异常"
+  external_provider_error: "服务异常",
+  runninghub_api_key_missing: "RunningHub Key 未配置",
+  runninghub_workflow_config_missing: "工作流配置缺失",
+  runninghub_config_invalid: "RunningHub 配置无效",
+  runninghub_timeout: "RunningHub 超时",
+  runninghub_task_failed: "RunningHub 任务失败",
+  runninghub_invalid_response: "RunningHub 返回异常",
+  runninghub_provider_disabled: "RunningHub adapter 未启用",
+  runninghub_provider_error: "RunningHub 服务异常"
 };
 
 const providerStatusLabels: Record<string, string> = {
@@ -31,8 +39,23 @@ const providerStatusLabels: Record<string, string> = {
   missing_api_key: "缺少 API Key",
   timeout: "请求超时",
   invalid_response: "返回异常",
+  missing_workflow_config: "缺少工作流配置",
+  invalid_config: "配置无效",
+  task_failed: "任务失败",
   provider_disabled: "尚未启用",
   provider_error: "服务失败"
+};
+
+const providerLabels: Record<MultimodalProviderType, string> = {
+  mock: "Mock",
+  external: "External",
+  runninghub: "RunningHub"
+};
+
+const providerDescriptions: Record<MultimodalProviderType, string> = {
+  mock: "mock（无需 Key）",
+  external: "external（仅后端环境变量）",
+  runninghub: "runninghub（仅后端环境变量）"
 };
 
 export function MultimodalAnalysisPanel({
@@ -51,8 +74,8 @@ export function MultimodalAnalysisPanel({
       <p className="mt-2 text-xs leading-5 text-zinc-600">
         多模态识别仅用于辅助判断服装主体和风险区域，不会直接进入校色。请确认 ROI / 蒙版准确后再执行校色。
       </p>
-      <div className="mt-3 grid grid-cols-2 gap-2" aria-label="多模态 provider">
-        {(["mock", "external"] as const).map((option) => (
+      <div className="mt-3 grid grid-cols-3 gap-2" aria-label="多模态 provider">
+        {(["mock", "external", "runninghub"] as const).map((option) => (
           <button
             className={`rounded-md border px-3 py-2 text-xs font-semibold transition ${
               provider === option
@@ -64,13 +87,18 @@ export function MultimodalAnalysisPanel({
             onClick={() => onProviderChange(option)}
             type="button"
           >
-            {option === "mock" ? "Mock" : "External"}
+            {providerLabels[option]}
           </button>
         ))}
       </div>
       <p className="mt-2 text-[11px] leading-4 text-zinc-500">
-        当前 provider：{provider === "mock" ? "mock（无需 Key）" : "external（仅后端环境变量）"}
+        当前 provider：{providerDescriptions[provider]}
       </p>
+      {provider === "runninghub" ? (
+        <p className="mt-2 rounded-md bg-sky-50 px-3 py-2 text-[11px] leading-5 text-sky-800">
+          RunningHub 识别结果仅作为辅助建议，不会直接进入校色。最终校色范围以用户确认后的 ROI / mask 为准。
+        </p>
+      ) : null}
       <button
         className="mt-3 w-full rounded-md bg-zinc-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-45"
         disabled={!hasSelectedImage || isAnalyzing}
