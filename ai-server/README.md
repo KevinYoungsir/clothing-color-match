@@ -441,6 +441,10 @@ $env:MULTIMODAL_AI_TIMEOUT_SECONDS="30"
 
 Never expose the Key through Vite variables or frontend code. This phase intentionally makes no external network request. Missing Key, timeout, invalid response, and disabled-provider paths return `success: false`, `recommendManualMask: true`, and `shouldApplyDirectlyToColorTransfer: false`. Continue with the local AI mask or manual mask.
 
+`provider=runninghub` adds a RunningHub-specific adapter skeleton. It reads these backend-only environment variables: `RUNNINGHUB_API_KEY`, `RUNNINGHUB_BASE_URL`, `RUNNINGHUB_WORKFLOW_ID`, `RUNNINGHUB_APP_ID`, `RUNNINGHUB_MODEL_TYPE`, `RUNNINGHUB_TIMEOUT_SECONDS`, `RUNNINGHUB_POLL_INTERVAL_SECONDS`, `RUNNINGHUB_MAX_POLL_ATTEMPTS`, `RUNNINGHUB_NODE_INFO_JSON`, and `RUNNINGHUB_RESULT_MODE`.
+
+The current adapter does not call RunningHub. Missing Key or workflow/app configuration returns a structured safe failure. Even with configuration present, the adapter remains `provider_disabled` until official submit/poll endpoints, payload mappings, and response samples are provided. Do not place a RunningHub Key in Vite, Electron, Git, documentation examples, or logs.
+
 ### `POST /segment-garment`
 
 Form fields:
