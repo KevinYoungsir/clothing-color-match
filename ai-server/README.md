@@ -363,6 +363,7 @@ Create or update the frontend `.env` file:
 ```txt
 VITE_AI_SEGMENTATION_API=http://localhost:8000/segment-garment
 VITE_AI_SEGMENTATION_TIMEOUT_MS=60000
+VITE_MULTIMODAL_ANALYSIS_API=http://localhost:8000/analyze-garment
 ```
 
 Restart the Vite dev server after changing `.env`.
@@ -418,6 +419,27 @@ Returns:
   "ok": true
 }
 ```
+
+### `POST /analyze-garment`
+
+This endpoint provides multimodal garment analysis suggestions separately from pixel-level segmentation. Form fields:
+
+- `image`: uploaded image file.
+- `role`: `source` or `target`.
+- `roi`: optional JSON `x/y/width/height`.
+- `provider`: `mock` (default) or `external`.
+
+The deterministic `mock` provider needs no API Key. The `external` skeleton reads only backend environment variables:
+
+```powershell
+$env:MULTIMODAL_AI_PROVIDER="external"
+$env:MULTIMODAL_AI_API_KEY="<local-only>"
+$env:MULTIMODAL_AI_BASE_URL="<optional>"
+$env:MULTIMODAL_AI_MODEL="<optional>"
+$env:MULTIMODAL_AI_TIMEOUT_SECONDS="30"
+```
+
+Never expose the Key through Vite variables or frontend code. This phase intentionally makes no external network request. Missing Key, timeout, invalid response, and disabled-provider paths return `success: false`, `recommendManualMask: true`, and `shouldApplyDirectlyToColorTransfer: false`. Continue with the local AI mask or manual mask.
 
 ### `POST /segment-garment`
 

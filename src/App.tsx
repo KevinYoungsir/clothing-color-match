@@ -41,7 +41,8 @@ import {
 import { runGarmentSegmentation, type SegmentationResult } from "./core/segmentationProvider";
 import {
   analyzeGarment,
-  type MultimodalAnalysisResult
+  type MultimodalAnalysisResult,
+  type MultimodalProviderType
 } from "./core/multimodalAnalysis";
 import type {
   ColorDifferenceResult,
@@ -137,6 +138,8 @@ export default function App() {
     useState<Record<string, MultimodalAnalysisResult>>({});
   const [multimodalAnalysisErrors, setMultimodalAnalysisErrors] =
     useState<Record<string, string>>({});
+  const [multimodalProvider, setMultimodalProvider] =
+    useState<MultimodalProviderType>("mock");
   const [multimodalAnalyzingId, setMultimodalAnalyzingId] = useState<string | null>(null);
   const [adjustmentError, setAdjustmentError] = useState<string | null>(null);
   const [isColorTransferRunning, setIsColorTransferRunning] = useState(false);
@@ -916,7 +919,7 @@ export default function App() {
     try {
       const analysis = await analyzeGarment({
         image: selectedSample,
-        provider: "mock",
+        provider: multimodalProvider,
         role: "target",
         roi: selectedGarmentRoi
       });
@@ -924,7 +927,11 @@ export default function App() {
         ...currentAnalyses,
         [sampleId]: analysis
       }));
-      setAutoMaskNotice("多模态识别建议已生成；该结果不会直接生成蒙版或进入校色。请先确认 ROI 和最终蒙版。");
+      setAutoMaskNotice(
+        analysis.success
+          ? "多模态识别建议已生成；该结果不会直接生成蒙版或进入校色。请先确认 ROI 和最终蒙版。"
+          : analysis.userMessage
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : "多模态识别建议生成失败";
       setMultimodalAnalysisErrors((currentErrors) => ({
@@ -937,13 +944,29 @@ export default function App() {
   }
 
   function handleApplyMultimodalSuggestedRoi() {
-    if (!selectedMultimodalAnalysis?.suggestedRoi) {
+    if (!selectedMultimodalAnalysis?.success || !selectedMultimodalAnalysis.suggestedRoi) {
       setAutoMaskNotice("当前没有可应用的建议 ROI");
       return;
     }
 
     handleGarmentRoiChange(selectedMultimodalAnalysis.suggestedRoi);
     setAutoMaskNotice("已应用多模态建议 ROI。请运行现有蒙版识别并确认结果，必要时使用手动蒙版后再校色。");
+  }
+
+  function handleMultimodalProviderChange(provider: MultimodalProviderType) {
+    setMultimodalProvider(provider);
+    if (!selectedSampleId) {
+      return;
+    }
+
+    setMultimodalAnalyses((currentAnalyses) => {
+      const { [selectedSampleId]: _removedAnalysis, ...remainingAnalyses } = currentAnalyses;
+      return remainingAnalyses;
+    });
+    setMultimodalAnalysisErrors((currentErrors) => {
+      const { [selectedSampleId]: _removedError, ...remainingErrors } = currentErrors;
+      return remainingErrors;
+    });
   }
 
   function handleClearGarmentRoi() {
@@ -1865,6 +1888,7 @@ export default function App() {
             maskTool={maskTool}
             multimodalAnalysis={selectedMultimodalAnalysis}
             multimodalAnalysisError={selectedMultimodalAnalysisError}
+            multimodalProvider={multimodalProvider}
             referenceMaskStatus={referenceMaskStatus}
             selectedSampleMaskStatus={selectedSampleMaskStatus}
             segmentationProviderType={segmentationProviderType}
@@ -1885,6 +1909,7 @@ export default function App() {
             onMaskToolChange={setMaskTool}
             onAnalyzeGarment={handleAnalyzeSelectedGarment}
             onApplyMultimodalSuggestedRoi={handleApplyMultimodalSuggestedRoi}
+            onMultimodalProviderChange={handleMultimodalProviderChange}
             onRedoMask={handleRedoMask}
             onRegenerateAutoMask={handleRegenerateAutoMask}
             onResetAdjustmentParam={handleResetAdjustmentParam}

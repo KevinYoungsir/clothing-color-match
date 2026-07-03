@@ -171,9 +171,8 @@ async def analyze_garment(
         }
 
     return {
-        "success": True,
         **result.to_response(),
-        "message": "mock multimodal analysis completed",
+        "message": result.user_message,
     }
 
 

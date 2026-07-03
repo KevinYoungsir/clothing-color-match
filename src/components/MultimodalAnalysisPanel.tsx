@@ -1,19 +1,38 @@
-import type { MultimodalAnalysisResult } from "../core/multimodalAnalysis";
+import type {
+  MultimodalAnalysisResult,
+  MultimodalProviderType
+} from "../core/multimodalAnalysis";
 
 type MultimodalAnalysisPanelProps = {
   analysis: MultimodalAnalysisResult | null;
   error: string | null;
   hasSelectedImage: boolean;
   isAnalyzing: boolean;
+  provider: MultimodalProviderType;
   onAnalyze: () => void;
   onApplySuggestedRoi: () => void;
+  onProviderChange: (provider: MultimodalProviderType) => void;
 };
 
 const riskLabels: Record<string, string> = {
   complex_background: "复杂背景",
   edge_touching: "主体贴边",
   hanger: "衣架 / 挂拍",
-  metal_clip: "金属夹具"
+  metal_clip: "金属夹具",
+  api_key_missing: "API Key 未配置",
+  api_timeout: "服务超时",
+  invalid_provider_response: "返回格式异常",
+  external_provider_disabled: "真实 provider 未启用",
+  external_provider_error: "服务异常"
+};
+
+const providerStatusLabels: Record<string, string> = {
+  ready: "可用",
+  missing_api_key: "缺少 API Key",
+  timeout: "请求超时",
+  invalid_response: "返回异常",
+  provider_disabled: "尚未启用",
+  provider_error: "服务失败"
 };
 
 export function MultimodalAnalysisPanel({
@@ -21,14 +40,36 @@ export function MultimodalAnalysisPanel({
   error,
   hasSelectedImage,
   isAnalyzing,
+  provider,
   onAnalyze,
-  onApplySuggestedRoi
+  onApplySuggestedRoi,
+  onProviderChange
 }: MultimodalAnalysisPanelProps) {
   return (
     <section className="border-b border-zinc-200 pb-5">
       <h3 className="text-sm font-semibold text-zinc-800">多模态识别建议</h3>
       <p className="mt-2 text-xs leading-5 text-zinc-600">
         多模态识别仅用于辅助判断服装主体和风险区域，不会直接进入校色。请确认 ROI / 蒙版准确后再执行校色。
+      </p>
+      <div className="mt-3 grid grid-cols-2 gap-2" aria-label="多模态 provider">
+        {(["mock", "external"] as const).map((option) => (
+          <button
+            className={`rounded-md border px-3 py-2 text-xs font-semibold transition ${
+              provider === option
+                ? "border-teal-500 bg-teal-50 text-teal-800"
+                : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300"
+            }`}
+            disabled={isAnalyzing}
+            key={option}
+            onClick={() => onProviderChange(option)}
+            type="button"
+          >
+            {option === "mock" ? "Mock" : "External"}
+          </button>
+        ))}
+      </div>
+      <p className="mt-2 text-[11px] leading-4 text-zinc-500">
+        当前 provider：{provider === "mock" ? "mock（无需 Key）" : "external（仅后端环境变量）"}
       </p>
       <button
         className="mt-3 w-full rounded-md bg-zinc-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-45"
@@ -46,11 +87,18 @@ export function MultimodalAnalysisPanel({
       ) : null}
 
       {analysis ? (
-        <div className="mt-3 space-y-2 rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-700">
+        <div className={`mt-3 space-y-2 rounded-md border p-3 text-xs ${
+          analysis.success
+            ? "border-zinc-200 bg-zinc-50 text-zinc-700"
+            : "border-amber-200 bg-amber-50 text-amber-900"
+        }`}>
           <div className="flex items-center justify-between gap-3">
             <span className="font-semibold">{analysis.garmentDescription}</span>
             <span className="shrink-0 text-zinc-500">{Math.round(analysis.confidence * 100)}%</span>
           </div>
+          <p className="text-zinc-500">
+            provider：{analysis.provider} · 状态：{providerStatusLabels[analysis.providerStatus] ?? analysis.providerStatus}
+          </p>
           {analysis.riskTags.length > 0 ? (
             <div className="flex flex-wrap gap-1">
               {analysis.riskTags.map((risk) => (
@@ -60,7 +108,7 @@ export function MultimodalAnalysisPanel({
               ))}
             </div>
           ) : (
-            <p className="text-emerald-700">未检测到 mock 风险标签，仍需确认实际蒙版。</p>
+            <p className="text-emerald-700">未检测到风险标签，仍需确认实际蒙版。</p>
           )}
           <p className="leading-5">{analysis.userMessage}</p>
           {analysis.recommendManualMask ? (
@@ -68,7 +116,7 @@ export function MultimodalAnalysisPanel({
               检测到高风险场景，建议使用手动蒙版精修校色区域。
             </p>
           ) : null}
-          {analysis.suggestedRoi ? (
+          {analysis.success && analysis.suggestedRoi ? (
             <div className="space-y-2">
               <p className="text-zinc-500">
                 建议 ROI：{analysis.suggestedRoi.x}, {analysis.suggestedRoi.y}, {analysis.suggestedRoi.width}, {analysis.suggestedRoi.height}
