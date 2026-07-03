@@ -1,0 +1,40 @@
+appId: com.clothingcolormatch.studio
+productName: 服装校色工具
+asar: true
+electronDist: node_modules/electron/dist
+npmRebuild: false
+
+directories:
+  output: release-desktop
+
+files:
+  - dist/**/*
+  - desktop/main.cjs
+  - desktop/preload.cjs
+  - package.json
+
+extraResources:
+  - from: desktop-resources/backend/ai-server-desktop.exe
+    to: backend/ai-server-desktop.exe
+  - from: ai-server/models/model.onnx
+    to: model/model.onnx
+
+win:
+  executableName: clothing-color-match
+  target:
+    - target: portable
+      arch:
+        - x64
+    - target: nsis
+      arch:
+        - x64
+
+portable:
+  artifactName: ${productName}-${version}-portable-${arch}.${ext}
+
+nsis:
+  artifactName: ${productName}-Setup-${version}-${arch}.${ext}
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
