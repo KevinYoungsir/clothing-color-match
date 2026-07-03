@@ -153,6 +153,7 @@ Frontend:
 ```txt
 VITE_AI_SEGMENTATION_API=http://localhost:8000/segment-garment
 VITE_AI_SEGMENTATION_TIMEOUT_MS=60000
+VITE_MULTIMODAL_ANALYSIS_API=http://localhost:8000/analyze-garment
 ```
 
 Backend:
@@ -170,6 +171,18 @@ $env:AI_LIGHTWEIGHT_MIN_COMPONENT_RATIO="0.002"
 $env:AI_LIGHTWEIGHT_TARGET_NORMALIZATION="imagenet"
 $env:AI_MASK_ROI_PADDING_RATIO="0.08"
 ```
+
+The multimodal analysis UI defaults to the deterministic `mock` provider and does not need a key. The `external` provider skeleton reads configuration only from the backend process environment:
+
+```powershell
+$env:MULTIMODAL_AI_PROVIDER="external"
+$env:MULTIMODAL_AI_API_KEY="<local-only>"
+$env:MULTIMODAL_AI_BASE_URL="<optional>"
+$env:MULTIMODAL_AI_MODEL="<optional>"
+$env:MULTIMODAL_AI_TIMEOUT_SECONDS="30"
+```
+
+Do not put `MULTIMODAL_AI_API_KEY` in Vite variables, frontend source, Git, or Electron resources. The current external provider performs no network request; missing or unavailable configuration returns a safe failure and directs the user to the local AI mask or manual mask.
 
 Optional debug output:
 
@@ -291,6 +304,7 @@ python scripts\verify_lightweight_image.py `
 - Hanger, metal clip, edge-touching, complex background, and closeup images still need human review when masks are visually ambiguous.
 - No-ROI success on high-risk images should be manually inspected before production export.
 - If a result looks wrong, edit the mask manually instead of forcing AI success.
+- Multimodal analysis provides category, risk, and ROI suggestions only. It never writes the final mask or directly enters color transfer.
 
 ## Known Limitations
 

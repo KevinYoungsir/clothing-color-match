@@ -44,10 +44,18 @@ class GarmentAnalysisResult:
     recommend_manual_mask: bool
     user_message: str
     safety_note: str
+    success: bool = True
+    provider_status: str = "ready"
+    fallback_used: bool = False
+    error_code: Optional[str] = None
 
     def to_response(self) -> Dict[str, object]:
         return {
+            "success": self.success,
             "provider": self.provider,
+            "providerStatus": self.provider_status,
+            "fallbackUsed": self.fallback_used,
+            "errorCode": self.error_code,
             "garmentCategory": self.garment_category,
             "garmentDescription": self.garment_description,
             "suggestedRoi": self.suggested_roi.to_response() if self.suggested_roi else None,

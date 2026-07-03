@@ -1,7 +1,13 @@
 import type { GarmentRoi, UploadedImage } from "../types";
 
+export type MultimodalProviderType = "mock" | "external";
+
 export type MultimodalAnalysisResult = {
+  success: boolean;
   provider: string;
+  providerStatus: string;
+  fallbackUsed: boolean;
+  errorCode: string | null;
   garmentCategory: string;
   garmentDescription: string;
   suggestedRoi: GarmentRoi | null;
@@ -19,7 +25,7 @@ export type MultimodalAnalysisResult = {
 
 type MultimodalAnalysisInput = {
   image: UploadedImage;
-  provider?: "mock";
+  provider?: MultimodalProviderType;
   role: "source" | "target";
   roi?: GarmentRoi | null;
 };
@@ -89,7 +95,7 @@ export async function analyzeGarment(
     body: formData
   });
   const payload = (await response.json().catch(() => null)) as MultimodalResponse | null;
-  if (!response.ok || !payload?.success) {
+  if (!response.ok || !payload) {
     throw new Error(payload?.message || `多模态识别请求失败 (${response.status})`);
   }
   if (payload.shouldApplyDirectlyToColorTransfer !== false) {
@@ -97,7 +103,11 @@ export async function analyzeGarment(
   }
 
   return {
+    success: payload.success === true,
     provider: String(payload.provider ?? "mock"),
+    providerStatus: String(payload.providerStatus ?? (payload.success ? "ready" : "provider_error")),
+    fallbackUsed: payload.fallbackUsed === true,
+    errorCode: payload.errorCode ? String(payload.errorCode) : null,
     garmentCategory: String(payload.garmentCategory ?? "unknown"),
     garmentDescription: String(payload.garmentDescription ?? "服装类别待确认"),
     suggestedRoi: normalizeSuggestedRoi(payload.suggestedRoi, input.image),

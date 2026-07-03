@@ -1,5 +1,8 @@
 import type { AdjustmentKey, AdjustmentParams } from "../core/adjustment";
-import type { MultimodalAnalysisResult } from "../core/multimodalAnalysis";
+import type {
+  MultimodalAnalysisResult,
+  MultimodalProviderType
+} from "../core/multimodalAnalysis";
 import { MultimodalAnalysisPanel } from "./MultimodalAnalysisPanel";
 import type {
   ColorCorrectionScope,
@@ -41,6 +44,7 @@ type AdjustmentPanelProps = {
   maskTool: MaskTool;
   multimodalAnalysis: MultimodalAnalysisResult | null;
   multimodalAnalysisError: string | null;
+  multimodalProvider: MultimodalProviderType;
   referenceMaskStatus: MaskRecognitionStatus;
   selectedSampleMaskStatus: MaskRecognitionStatus;
   segmentationProviderType: SegmentationProviderType;
@@ -61,6 +65,7 @@ type AdjustmentPanelProps = {
   onMaskToolChange: (tool: MaskTool) => void;
   onAnalyzeGarment: () => void;
   onApplyMultimodalSuggestedRoi: () => void;
+  onMultimodalProviderChange: (provider: MultimodalProviderType) => void;
   onRedoMask: () => void;
   onRegenerateAutoMask: () => void;
   onResetAdjustmentParam: (key: AdjustmentKey) => void;
@@ -229,6 +234,7 @@ export function AdjustmentPanel({
   maskTool,
   multimodalAnalysis,
   multimodalAnalysisError,
+  multimodalProvider,
   referenceMaskStatus,
   selectedSampleMaskStatus,
   segmentationProviderType,
@@ -249,6 +255,7 @@ export function AdjustmentPanel({
   onMaskToolChange,
   onAnalyzeGarment,
   onApplyMultimodalSuggestedRoi,
+  onMultimodalProviderChange,
   onRedoMask,
   onRegenerateAutoMask,
   onResetAdjustmentParam,
@@ -297,8 +304,10 @@ export function AdjustmentPanel({
           error={multimodalAnalysisError}
           hasSelectedImage={hasSelectedImage}
           isAnalyzing={isMultimodalAnalyzing}
+          provider={multimodalProvider}
           onAnalyze={onAnalyzeGarment}
           onApplySuggestedRoi={onApplyMultimodalSuggestedRoi}
+          onProviderChange={onMultimodalProviderChange}
         />
         <section>
           <h3 className="text-sm font-semibold text-zinc-800">自动校色</h3>
