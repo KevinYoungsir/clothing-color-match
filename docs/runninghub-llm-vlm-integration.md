@@ -75,6 +75,8 @@ The required response fields are:
 
 The provider validates every required field, boolean type, confidence range, risk-tag list, and ROI bounds against the original image. A malformed or incomplete result is rejected.
 
+RunningHub natural-language categories and risk labels are normalized into stable internal identifiers. The response also includes optional `rawGarmentCategory` and `rawRiskTags` fields for diagnostics. Unknown values become `unknown` or `unknown_risk` instead of leaking arbitrary model text into internal tags.
+
 ## Advisory-Only Safety Boundary
 
 `shouldApplyDirectlyToColorTransfer` is always `false`, including successful responses. A suggested ROI can only populate the current target ROI editor state. Applying it clears stale derived results and does not start segmentation or color transfer.

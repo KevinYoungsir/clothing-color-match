@@ -15,8 +15,25 @@ type MultimodalAnalysisPanelProps = {
 };
 
 const riskLabels: Record<string, string> = {
+  striped_pattern: "条纹图案",
+  logo_present: "包含 Logo",
+  dark_fabric: "深色面料",
+  light_fabric: "浅色面料",
+  hanger_present: "检测到衣架",
+  metal_clip_present: "检测到金属夹",
   complex_background: "复杂背景",
   edge_touching: "主体贴边",
+  folded_garment: "服装折叠",
+  wrinkled_fabric: "褶皱面料",
+  partial_garment: "仅识别到局部",
+  closeup_detail: "近景细节",
+  multiple_garments: "多件服装",
+  shadow_risk: "阴影风险",
+  collar_shadow: "领口阴影",
+  low_contrast: "低对比度",
+  high_contrast_pattern: "高对比图案",
+  reflective_material: "反光材质",
+  unknown_risk: "未分类风险",
   hanger: "衣架 / 挂拍",
   metal_clip: "金属夹具",
   api_key_missing: "API Key 未配置",
@@ -132,6 +149,10 @@ export function MultimodalAnalysisPanel({
             <span className="shrink-0 text-zinc-500">{Math.round(analysis.confidence * 100)}%</span>
           </div>
           <p className="text-zinc-600">分类：{analysis.garmentCategory}</p>
+          {analysis.rawGarmentCategory &&
+          analysis.rawGarmentCategory.toLowerCase() !== analysis.garmentCategory.toLowerCase() ? (
+            <p className="text-zinc-500">原始识别：{analysis.rawGarmentCategory}</p>
+          ) : null}
           <p className="text-zinc-500">
             provider：{analysis.provider} · 状态：{providerStatusLabels[analysis.providerStatus] ?? analysis.providerStatus}
           </p>

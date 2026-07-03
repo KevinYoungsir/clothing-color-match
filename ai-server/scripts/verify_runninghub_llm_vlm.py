@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 import sys
@@ -6,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Dict, Iterator, Optional
 from unittest.mock import patch
+from urllib.parse import urlparse
 
 from PIL import Image
 
@@ -158,16 +160,16 @@ def verify_timeout() -> Dict[str, object]:
 def verify_success() -> Dict[str, object]:
     content = json.dumps(
         {
-            "garmentCategory": "trouser",
-            "garmentDescription": "gray hanging trousers",
+            "garmentCategory": "polo shirt",
+            "garmentDescription": "navy striped polo shirt",
             "suggestedRoi": {"x": 40, "y": 60, "width": 220, "height": 360},
             "confidence": 0.88,
-            "riskTags": ["hanger", "metal_clip"],
-            "containsHanger": True,
-            "containsMetalClip": True,
+            "riskTags": ["striped pattern"],
+            "containsHanger": False,
+            "containsMetalClip": False,
             "edgeTouching": False,
             "complexBackground": False,
-            "recommendManualMask": True,
+            "recommendManualMask": False,
             "userMessage": "请确认 ROI 和最终蒙版后再校色。",
         }
     )
@@ -182,20 +184,100 @@ def verify_success() -> Dict[str, object]:
     response = result.to_response()
     assert result.success is True
     assert result.provider_status == "ready"
+    assert result.garment_category == "polo"
+    assert result.raw_garment_category == "polo shirt"
+    assert result.risk_tags == ("striped_pattern",)
+    assert result.raw_risk_tags == ("striped pattern",)
+    assert result.recommend_manual_mask is False
     assert result.suggested_roi is not None
     assert response["shouldApplyDirectlyToColorTransfer"] is False
     assert len(fake_client.requests) == 1
     image_url = fake_client.requests[0]["messages"][1]["content"][1]["image_url"]["url"]
     assert image_url.startswith("data:image/jpeg;base64,")
+
+    high_risk_payload = json.loads(content)
+    high_risk_payload["riskTags"] = ["contains hanger"]
+    high_risk_result = runninghub_provider.parse_runninghub_vlm_payload(
+        high_risk_payload,
+        make_input(),
+    )
+    assert high_risk_result.risk_tags == ("hanger_present",)
+    assert high_risk_result.recommend_manual_mask is True
     return {
         "status": "success",
         "providerStatus": result.provider_status,
+        "garmentCategory": result.garment_category,
+        "rawGarmentCategory": result.raw_garment_category,
+        "riskTags": list(result.risk_tags),
+        "rawRiskTags": list(result.raw_risk_tags),
         "suggestedRoi": result.suggested_roi.to_response(),
         "usesImageDataUrl": True,
+        "highRiskManualMaskPromoted": True,
     }
 
 
+def verify_live(image_path: Path) -> None:
+    if not image_path.is_file():
+        raise FileNotFoundError("Live validation image does not exist")
+
+    config = runninghub_provider.load_runninghub_config()
+    with Image.open(image_path) as source_image:
+        image = source_image.convert("RGB")
+    result = runninghub_provider.RunningHubMultimodalProvider().analyze(
+        GarmentAnalysisInput(
+            image=image,
+            file_name="live-validation-image",
+            role="target",
+            roi=None,
+        )
+    )
+    response = result.to_response()
+    safe_output = {
+        "configuration": {
+            "apiKey": "configured" if config.api_key else "missing",
+            "realCallEnabled": config.enable_real_call,
+            "modelType": config.model_type,
+            "baseUrlHost": urlparse(config.llm_base_url).hostname,
+            "model": config.llm_model,
+        },
+        "result": {
+            key: response[key]
+            for key in (
+                "success",
+                "provider",
+                "providerStatus",
+                "errorCode",
+                "garmentCategory",
+                "rawGarmentCategory",
+                "suggestedRoi",
+                "confidence",
+                "riskTags",
+                "rawRiskTags",
+                "recommendManualMask",
+                "shouldApplyDirectlyToColorTransfer",
+            )
+        },
+    }
+    print(json.dumps(safe_output, ensure_ascii=False, indent=2))
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Verify RunningHub LLM/VLM advisory provider safety states."
+    )
+    parser.add_argument("--live", action="store_true", help="Use the configured real provider")
+    parser.add_argument("--image", type=Path, help="Local image used only for --live")
+    args = parser.parse_args()
+    if args.live and args.image is None:
+        parser.error("--live requires --image")
+    return args
+
+
 def main() -> None:
+    args = parse_args()
+    if args.live:
+        verify_live(args.image)
+        return
     results = {
         "ready": verify_ready(),
         "missing_api_key": verify_missing_api_key(),
