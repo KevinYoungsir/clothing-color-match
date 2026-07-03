@@ -184,7 +184,11 @@ $env:MULTIMODAL_AI_TIMEOUT_SECONDS="30"
 
 Do not put `MULTIMODAL_AI_API_KEY` in Vite variables, frontend source, Git, or Electron resources. The current external provider performs no network request; missing or unavailable configuration returns a safe failure and directs the user to the local AI mask or manual mask.
 
-The optional `runninghub` provider is also a network-disabled adapter skeleton. It reads only backend `RUNNINGHUB_*` environment variables, including `RUNNINGHUB_API_KEY`, workflow/app identifiers, timeout, polling, node mapping, and result mode. No RunningHub Key belongs in frontend configuration, Electron resources, Git, README examples, or logs. Until official submit/poll endpoints and response samples are supplied, the adapter fails safely and directs users to the local AI mask or manual mask.
+The optional `runninghub` provider keeps its legacy workflow/app adapter branches network-disabled until their contracts are configured. Its `llm_vlm` branch is a real OpenAI-compatible advisory provider. All `RUNNINGHUB_*` configuration remains backend-only; no RunningHub Key belongs in frontend configuration, Electron resources, Git, README examples, or logs.
+
+RunningHub also supports `RUNNINGHUB_MODEL_TYPE=llm_vlm` for the OpenAI-compatible Vision endpoint. This mode defaults to `https://llm.runninghub.cn/v1` with model `qwen/qwen3.7-plus`, does not require workflow/app/node configuration, and remains disabled unless the backend process explicitly sets `RUNNINGHUB_ENABLE_REAL_CALL=true`. The Key never enters Vite, Electron, Git, or frontend storage; VLM output remains advice that must be confirmed through the existing ROI / mask flow.
+
+Use `ai-server/scripts/verify_runninghub_llm_vlm.py` to validate ready, missing-Key, malformed-JSON, timeout, and success behavior without a real Key or network request. See `docs/runninghub-llm-vlm-integration.md` for setup and failure handling.
 
 Optional debug output:
 
