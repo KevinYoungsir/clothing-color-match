@@ -9,10 +9,12 @@ export type MultimodalAnalysisResult = {
   fallbackUsed: boolean;
   errorCode: string | null;
   garmentCategory: string;
+  rawGarmentCategory: string | null;
   garmentDescription: string;
   suggestedRoi: GarmentRoi | null;
   confidence: number;
   riskTags: string[];
+  rawRiskTags: string[];
   containsHanger: boolean;
   containsMetalClip: boolean;
   edgeTouching: boolean;
@@ -109,10 +111,14 @@ export async function analyzeGarment(
     fallbackUsed: payload.fallbackUsed === true,
     errorCode: payload.errorCode ? String(payload.errorCode) : null,
     garmentCategory: String(payload.garmentCategory ?? "unknown"),
+    rawGarmentCategory: payload.rawGarmentCategory
+      ? String(payload.rawGarmentCategory)
+      : null,
     garmentDescription: String(payload.garmentDescription ?? "服装类别待确认"),
     suggestedRoi: normalizeSuggestedRoi(payload.suggestedRoi, input.image),
     confidence: Math.max(0, Math.min(1, Number(payload.confidence ?? 0))),
     riskTags: Array.isArray(payload.riskTags) ? payload.riskTags.map(String) : [],
+    rawRiskTags: Array.isArray(payload.rawRiskTags) ? payload.rawRiskTags.map(String) : [],
     containsHanger: payload.containsHanger === true,
     containsMetalClip: payload.containsMetalClip === true,
     edgeTouching: payload.edgeTouching === true,

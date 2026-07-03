@@ -456,6 +456,8 @@ cd "D:\Color Calibration\ai-server"
 
 See `docs/runninghub-llm-vlm-integration.md` for the full request contract and safety boundary.
 
+A sanitized real-call validation has completed successfully. RunningHub natural-language categories and risk tags are normalized before they reach the UI, with raw values retained only as advisory diagnostics. The Key remains backend-only, and users must still confirm ROI / mask before color transfer. See `docs/runninghub-live-verification.md`.
+
 ### `POST /segment-garment`
 
 Form fields:

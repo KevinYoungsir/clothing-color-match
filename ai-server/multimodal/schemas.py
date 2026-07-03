@@ -48,6 +48,8 @@ class GarmentAnalysisResult:
     provider_status: str = "ready"
     fallback_used: bool = False
     error_code: Optional[str] = None
+    raw_garment_category: Optional[str] = None
+    raw_risk_tags: Tuple[str, ...] = ()
 
     def to_response(self) -> Dict[str, object]:
         return {
@@ -57,10 +59,12 @@ class GarmentAnalysisResult:
             "fallbackUsed": self.fallback_used,
             "errorCode": self.error_code,
             "garmentCategory": self.garment_category,
+            "rawGarmentCategory": self.raw_garment_category,
             "garmentDescription": self.garment_description,
             "suggestedRoi": self.suggested_roi.to_response() if self.suggested_roi else None,
             "confidence": self.confidence,
             "riskTags": list(self.risk_tags),
+            "rawRiskTags": list(self.raw_risk_tags),
             "containsHanger": self.contains_hanger,
             "containsMetalClip": self.contains_metal_clip,
             "edgeTouching": self.edge_touching,

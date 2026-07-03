@@ -190,6 +190,8 @@ RunningHub also supports `RUNNINGHUB_MODEL_TYPE=llm_vlm` for the OpenAI-compatib
 
 Use `ai-server/scripts/verify_runninghub_llm_vlm.py` to validate ready, missing-Key, malformed-JSON, timeout, and success behavior without a real Key or network request. See `docs/runninghub-llm-vlm-integration.md` for setup and failure handling.
 
+The RunningHub `llm_vlm` path has also completed a sanitized real-call validation. Natural-language categories and risk tags are normalized into stable internal identifiers while their raw values remain available for diagnostics. The result is still advisory: the frontend and Electron never store the Key, and users must confirm ROI / mask before color transfer. See `docs/runninghub-live-verification.md`.
+
 Optional debug output:
 
 ```powershell

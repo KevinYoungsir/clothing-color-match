@@ -1,5 +1,6 @@
 import base64
 import json
+import re
 from dataclasses import dataclass
 from io import BytesIO
 from math import isfinite
@@ -28,6 +29,59 @@ class RunningHubLlmTimeoutError(TimeoutError):
 
 class RunningHubLlmInvalidResponseError(ValueError):
     pass
+
+
+CATEGORY_ALIASES = (
+    (("polo shirt", "polo tee", "polo"), "polo"),
+    (("short sleeved t shirt", "short sleeve t shirt", "t shirt", "tshirt", "tee"), "tshirt"),
+    (("dress shirt", "button shirt", "button down shirt", "shirt"), "shirt"),
+    (("denim pants", "denim trousers", "jeans", "jean"), "jeans"),
+    (("trousers", "trouser", "pants", "slacks"), "trousers"),
+    (("shorts", "short pants"), "shorts"),
+    (("hoodie", "sweatshirt"), "hoodie"),
+    (("knitwear", "sweater", "knit"), "knitwear"),
+    (("jacket", "coat", "outerwear"), "jacket"),
+    (("vest", "waistcoat"), "vest"),
+)
+
+RISK_TAG_ALIASES = (
+    (("high contrast stripe", "high contrast pattern", "high contrast"), "high_contrast_pattern"),
+    (("horizontal stripe", "striped pattern", "stripes", "stripe"), "striped_pattern"),
+    (("chest logo", "logo present", "logo"), "logo_present"),
+    (("dark fabric", "black garment", "navy garment", "navy"), "dark_fabric"),
+    (("light fabric", "white garment", "pale garment"), "light_fabric"),
+    (("contains hanger", "hanger present", "hanger"), "hanger_present"),
+    (("metal clip present", "metal clips", "metal clip", "clips", "clip"), "metal_clip_present"),
+    (("touches edge", "edge touching", "cropped"), "edge_touching"),
+    (("complex background", "busy background"), "complex_background"),
+    (("folded garment", "folded"), "folded_garment"),
+    (("wrinkled fabric", "wrinkles", "wrinkled"), "wrinkled_fabric"),
+    (("partial garment", "partially visible", "partial"), "partial_garment"),
+    (("detail shot", "close up", "closeup"), "closeup_detail"),
+    (("multiple garments", "multiple clothes"), "multiple_garments"),
+    (("collar shadow",), "collar_shadow"),
+    (("shadow risk", "strong shadow", "shadow"), "shadow_risk"),
+    (("low contrast",), "low_contrast"),
+    (("reflective material", "reflective fabric", "reflection"), "reflective_material"),
+)
+
+HIGH_RISK_TAGS = frozenset(
+    {
+        "hanger_present",
+        "metal_clip_present",
+        "edge_touching",
+        "complex_background",
+        "folded_garment",
+        "partial_garment",
+        "closeup_detail",
+        "multiple_garments",
+        "shadow_risk",
+        "collar_shadow",
+        "low_contrast",
+        "high_contrast_pattern",
+        "reflective_material",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -314,6 +368,46 @@ def _required_bool(payload: Dict[str, Any], field_name: str) -> bool:
     return value
 
 
+def _normalized_phrase(value: str) -> str:
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", value.lower()).split())
+
+
+def _contains_phrase(value: str, phrase: str) -> bool:
+    return f" {phrase} " in f" {value} "
+
+
+def normalize_garment_category(value: str) -> str:
+    normalized = _normalized_phrase(value)
+    if normalized in {"unknown", "unclear", "other", ""}:
+        return "unknown"
+    for aliases, category in CATEGORY_ALIASES:
+        if any(_contains_phrase(normalized, alias) for alias in aliases):
+            return category
+    return "unknown"
+
+
+def normalize_risk_tags(values: List[str]) -> List[str]:
+    normalized_tags: List[str] = []
+    for value in values:
+        normalized = _normalized_phrase(value)
+        mapped = next(
+            (
+                risk_tag
+                for aliases, risk_tag in RISK_TAG_ALIASES
+                if any(_contains_phrase(normalized, alias) for alias in aliases)
+            ),
+            "unknown_risk",
+        )
+        if mapped not in normalized_tags:
+            normalized_tags.append(mapped)
+    return normalized_tags
+
+
+def _append_unique(values: List[str], value: str) -> None:
+    if value not in values:
+        values.append(value)
+
+
 def parse_runninghub_vlm_payload(
     payload: Dict[str, Any],
     analysis_input: GarmentAnalysisInput,
@@ -354,9 +448,28 @@ def parse_runninghub_vlm_payload(
     if not isfinite(confidence) or confidence < 0 or confidence > 1:
         raise RunningHubLlmInvalidResponseError("confidence must be between 0 and 1")
 
-    risk_tags = payload["riskTags"]
-    if not isinstance(risk_tags, list) or not all(isinstance(tag, str) for tag in risk_tags):
+    raw_risk_tags = payload["riskTags"]
+    if not isinstance(raw_risk_tags, list) or not all(
+        isinstance(tag, str) for tag in raw_risk_tags
+    ):
         raise RunningHubLlmInvalidResponseError("riskTags must be an array of strings")
+
+    contains_hanger = _required_bool(payload, "containsHanger")
+    contains_metal_clip = _required_bool(payload, "containsMetalClip")
+    edge_touching = _required_bool(payload, "edgeTouching")
+    complex_background = _required_bool(payload, "complexBackground")
+    model_recommends_manual_mask = _required_bool(payload, "recommendManualMask")
+    normalized_risk_tags = normalize_risk_tags(raw_risk_tags)
+    if contains_hanger:
+        _append_unique(normalized_risk_tags, "hanger_present")
+    if contains_metal_clip:
+        _append_unique(normalized_risk_tags, "metal_clip_present")
+    if edge_touching:
+        _append_unique(normalized_risk_tags, "edge_touching")
+    if complex_background:
+        _append_unique(normalized_risk_tags, "complex_background")
+    high_risk_detected = any(tag in HIGH_RISK_TAGS for tag in normalized_risk_tags)
+    recommend_manual_mask = model_recommends_manual_mask or high_risk_detected
 
     suggested_roi = None
     roi_payload = payload["suggestedRoi"]
@@ -386,6 +499,14 @@ def parse_runninghub_vlm_payload(
         suggested_roi = SuggestedRoi(x=x, y=y, width=width, height=height)
 
     safe_user_message = user_message.strip()
+    if high_risk_detected and not model_recommends_manual_mask:
+        safe_user_message = (
+            f"{safe_user_message} 检测到高风险场景，建议使用手动蒙版确认校色区域。"
+        )
+    elif "striped_pattern" in normalized_risk_tags:
+        safe_user_message = (
+            f"{safe_user_message} 请确认主色区域与条纹区域是否都需要校色。"
+        )
     if "ROI" not in safe_user_message or not any(
         token in safe_user_message.lower() for token in ("mask", "蒙版")
     ):
@@ -394,16 +515,18 @@ def parse_runninghub_vlm_payload(
     return GarmentAnalysisResult(
         provider="runninghub",
         provider_status="ready",
-        garment_category=garment_category.strip(),
+        garment_category=normalize_garment_category(garment_category),
+        raw_garment_category=garment_category.strip(),
         garment_description=garment_description.strip(),
         suggested_roi=suggested_roi,
         confidence=confidence,
-        risk_tags=tuple(tag.strip() for tag in risk_tags if tag.strip()),
-        contains_hanger=_required_bool(payload, "containsHanger"),
-        contains_metal_clip=_required_bool(payload, "containsMetalClip"),
-        edge_touching=_required_bool(payload, "edgeTouching"),
-        complex_background=_required_bool(payload, "complexBackground"),
-        recommend_manual_mask=_required_bool(payload, "recommendManualMask"),
+        risk_tags=tuple(normalized_risk_tags),
+        raw_risk_tags=tuple(tag.strip() for tag in raw_risk_tags if tag.strip()),
+        contains_hanger=contains_hanger,
+        contains_metal_clip=contains_metal_clip,
+        edge_touching=edge_touching,
+        complex_background=complex_background,
+        recommend_manual_mask=recommend_manual_mask,
         user_message=safe_user_message,
         safety_note=(
             "RunningHub 识别结果仅作为辅助建议，不会直接进入校色。"
