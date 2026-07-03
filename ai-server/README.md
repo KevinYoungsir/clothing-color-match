@@ -427,7 +427,7 @@ This endpoint provides multimodal garment analysis suggestions separately from p
 - `image`: uploaded image file.
 - `role`: `source` or `target`.
 - `roi`: optional JSON `x/y/width/height`.
-- `provider`: `mock` (default) or `external`.
+- `provider`: `mock` (default), `external`, or `runninghub`.
 
 The deterministic `mock` provider needs no API Key. The `external` skeleton reads only backend environment variables:
 
@@ -441,9 +441,20 @@ $env:MULTIMODAL_AI_TIMEOUT_SECONDS="30"
 
 Never expose the Key through Vite variables or frontend code. This phase intentionally makes no external network request. Missing Key, timeout, invalid response, and disabled-provider paths return `success: false`, `recommendManualMask: true`, and `shouldApplyDirectlyToColorTransfer: false`. Continue with the local AI mask or manual mask.
 
-`provider=runninghub` adds a RunningHub-specific adapter skeleton. It reads these backend-only environment variables: `RUNNINGHUB_API_KEY`, `RUNNINGHUB_BASE_URL`, `RUNNINGHUB_WORKFLOW_ID`, `RUNNINGHUB_APP_ID`, `RUNNINGHUB_MODEL_TYPE`, `RUNNINGHUB_TIMEOUT_SECONDS`, `RUNNINGHUB_POLL_INTERVAL_SECONDS`, `RUNNINGHUB_MAX_POLL_ATTEMPTS`, `RUNNINGHUB_NODE_INFO_JSON`, and `RUNNINGHUB_RESULT_MODE`.
+`provider=runninghub` adds a RunningHub-specific provider. Its legacy `workflow`, `aiapp`, and `standard` adapter branches remain network-disabled until their submit/poll contracts are configured. The `llm_vlm` branch is a real OpenAI-compatible advisory provider and is independently opt-in.
 
-The current adapter does not call RunningHub. Missing Key or workflow/app configuration returns a structured safe failure. Even with configuration present, the adapter remains `provider_disabled` until official submit/poll endpoints, payload mappings, and response samples are provided. Do not place a RunningHub Key in Vite, Electron, Git, documentation examples, or logs.
+Set `RUNNINGHUB_MODEL_TYPE=llm_vlm` to use the OpenAI-compatible Vision branch. It reads `RUNNINGHUB_LLM_BASE_URL` (default `https://llm.runninghub.cn/v1`), `RUNNINGHUB_LLM_MODEL` (default `qwen/qwen3.7-plus`), `RUNNINGHUB_LLM_MAX_TOKENS` (default `2048`), and `RUNNINGHUB_LLM_TEMPERATURE` (default `0.1`). Real calls remain disabled unless `RUNNINGHUB_ENABLE_REAL_CALL=true`. This branch sends an in-memory JPEG data URL, requests strict JSON, and does not require workflow ID, app ID, nodeInfoList, submit endpoint, or poll endpoint.
+
+Install `requirements-desktop.txt` for the optional `openai` Python client. Missing client, timeout, request errors, non-JSON, missing fields, invalid types, or out-of-bounds ROI values fail safely and direct the user to the local AI mask or manual mask. Never put `RUNNINGHUB_API_KEY` in frontend or Electron configuration.
+
+Run the deterministic five-state check without a real Key or network request:
+
+```powershell
+cd "D:\Color Calibration\ai-server"
+.venv-desktop\Scripts\python.exe scripts\verify_runninghub_llm_vlm.py
+```
+
+See `docs/runninghub-llm-vlm-integration.md` for the full request contract and safety boundary.
 
 ### `POST /segment-garment`
 

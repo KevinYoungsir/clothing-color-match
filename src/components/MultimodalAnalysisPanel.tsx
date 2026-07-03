@@ -25,6 +25,11 @@ const riskLabels: Record<string, string> = {
   external_provider_disabled: "真实 provider 未启用",
   external_provider_error: "服务异常",
   runninghub_api_key_missing: "RunningHub Key 未配置",
+  runninghub_real_call_disabled: "真实调用未启用",
+  runninghub_vlm_timeout: "VLM 请求超时",
+  runninghub_vlm_request_failed: "VLM 请求失败",
+  runninghub_vlm_invalid_response: "VLM 返回异常",
+  runninghub_llm_config_invalid: "VLM 配置无效",
   runninghub_workflow_config_missing: "工作流配置缺失",
   runninghub_config_invalid: "RunningHub 配置无效",
   runninghub_timeout: "RunningHub 超时",
@@ -37,6 +42,8 @@ const riskLabels: Record<string, string> = {
 const providerStatusLabels: Record<string, string> = {
   ready: "可用",
   missing_api_key: "缺少 API Key",
+  real_call_disabled: "真实调用未启用",
+  request_failed: "请求失败",
   timeout: "请求超时",
   invalid_response: "返回异常",
   missing_workflow_config: "缺少工作流配置",
@@ -124,6 +131,7 @@ export function MultimodalAnalysisPanel({
             <span className="font-semibold">{analysis.garmentDescription}</span>
             <span className="shrink-0 text-zinc-500">{Math.round(analysis.confidence * 100)}%</span>
           </div>
+          <p className="text-zinc-600">分类：{analysis.garmentCategory}</p>
           <p className="text-zinc-500">
             provider：{analysis.provider} · 状态：{providerStatusLabels[analysis.providerStatus] ?? analysis.providerStatus}
           </p>
