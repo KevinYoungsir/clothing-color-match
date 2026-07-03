@@ -1,4 +1,6 @@
 import type { AdjustmentKey, AdjustmentParams } from "../core/adjustment";
+import type { MultimodalAnalysisResult } from "../core/multimodalAnalysis";
+import { MultimodalAnalysisPanel } from "./MultimodalAnalysisPanel";
 import type {
   ColorCorrectionScope,
   ColorDifferenceResult,
@@ -32,10 +34,13 @@ type AdjustmentPanelProps = {
   isMaskVisible: boolean;
   isBatchColoring: boolean;
   isColorTransferRunning: boolean;
+  isMultimodalAnalyzing: boolean;
   maskEditMode: MaskEditMode;
   maskFeather: number;
   maskOpacity: number;
   maskTool: MaskTool;
+  multimodalAnalysis: MultimodalAnalysisResult | null;
+  multimodalAnalysisError: string | null;
   referenceMaskStatus: MaskRecognitionStatus;
   selectedSampleMaskStatus: MaskRecognitionStatus;
   segmentationProviderType: SegmentationProviderType;
@@ -54,6 +59,8 @@ type AdjustmentPanelProps = {
   onMaskFeatherChange: (value: number) => void;
   onMaskOpacityChange: (value: number) => void;
   onMaskToolChange: (tool: MaskTool) => void;
+  onAnalyzeGarment: () => void;
+  onApplyMultimodalSuggestedRoi: () => void;
   onRedoMask: () => void;
   onRegenerateAutoMask: () => void;
   onResetAdjustmentParam: (key: AdjustmentKey) => void;
@@ -215,10 +222,13 @@ export function AdjustmentPanel({
   isMaskVisible,
   isBatchColoring,
   isColorTransferRunning,
+  isMultimodalAnalyzing,
   maskEditMode,
   maskFeather,
   maskOpacity,
   maskTool,
+  multimodalAnalysis,
+  multimodalAnalysisError,
   referenceMaskStatus,
   selectedSampleMaskStatus,
   segmentationProviderType,
@@ -237,6 +247,8 @@ export function AdjustmentPanel({
   onMaskFeatherChange,
   onMaskOpacityChange,
   onMaskToolChange,
+  onAnalyzeGarment,
+  onApplyMultimodalSuggestedRoi,
   onRedoMask,
   onRegenerateAutoMask,
   onResetAdjustmentParam,
@@ -280,6 +292,14 @@ export function AdjustmentPanel({
       </div>
 
       <div className="min-h-0 flex-1 space-y-5 overflow-auto p-4">
+        <MultimodalAnalysisPanel
+          analysis={multimodalAnalysis}
+          error={multimodalAnalysisError}
+          hasSelectedImage={hasSelectedImage}
+          isAnalyzing={isMultimodalAnalyzing}
+          onAnalyze={onAnalyzeGarment}
+          onApplySuggestedRoi={onApplyMultimodalSuggestedRoi}
+        />
         <section>
           <h3 className="text-sm font-semibold text-zinc-800">自动校色</h3>
           <p className="mt-2 rounded-md bg-teal-50 px-3 py-2 text-xs leading-5 text-teal-800">

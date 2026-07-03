@@ -39,6 +39,10 @@ import {
   type ProcessedSampleResult
 } from "./core/batchProcessor";
 import { runGarmentSegmentation, type SegmentationResult } from "./core/segmentationProvider";
+import {
+  analyzeGarment,
+  type MultimodalAnalysisResult
+} from "./core/multimodalAnalysis";
 import type {
   ColorDifferenceResult,
   ColorCorrectionScope,
@@ -129,6 +133,11 @@ export default function App() {
   const [adjustmentParams, setAdjustmentParams] = useState<AdjustmentParams>(defaultAdjustmentParams);
   const [colorTransferError, setColorTransferError] = useState<string | null>(null);
   const [autoMaskNotice, setAutoMaskNotice] = useState<string | null>(null);
+  const [multimodalAnalyses, setMultimodalAnalyses] =
+    useState<Record<string, MultimodalAnalysisResult>>({});
+  const [multimodalAnalysisErrors, setMultimodalAnalysisErrors] =
+    useState<Record<string, string>>({});
+  const [multimodalAnalyzingId, setMultimodalAnalyzingId] = useState<string | null>(null);
   const [adjustmentError, setAdjustmentError] = useState<string | null>(null);
   const [isColorTransferRunning, setIsColorTransferRunning] = useState(false);
   const [isBatchColoring, setIsBatchColoring] = useState(false);
@@ -155,6 +164,12 @@ export default function App() {
     ? sampleMaskStatuses[selectedSampleId] ?? "unrecognized"
     : "unrecognized";
   const selectedGarmentRoi = selectedSampleId ? garmentRoiMap[selectedSampleId] ?? null : null;
+  const selectedMultimodalAnalysis = selectedSampleId
+    ? multimodalAnalyses[selectedSampleId] ?? null
+    : null;
+  const selectedMultimodalAnalysisError = selectedSampleId
+    ? multimodalAnalysisErrors[selectedSampleId] ?? null
+    : null;
   const activeImage = maskEditMode === "reference" ? referenceImage : selectedSample;
   const activeMaskState = maskEditMode === "reference" ? referenceMaskState : selectedMaskState;
   const activeGarmentRoi = maskEditMode === "target" ? selectedGarmentRoi : null;
@@ -883,6 +898,52 @@ export default function App() {
     setIsRoiSelectionActive(false);
     setMaskEditMode("target");
     setAutoMaskNotice("已保存服装框选区域，自动识别将只在框选范围内运行；如蒙版不完整或选中夹具/背景，请使用手动蒙版修正。");
+  }
+
+  async function handleAnalyzeSelectedGarment() {
+    if (!selectedSample) {
+      setAutoMaskNotice("请先选择样品图");
+      return;
+    }
+
+    const sampleId = selectedSample.id;
+    setMultimodalAnalyzingId(sampleId);
+    setMultimodalAnalysisErrors((currentErrors) => {
+      const { [sampleId]: _removedError, ...remainingErrors } = currentErrors;
+      return remainingErrors;
+    });
+
+    try {
+      const analysis = await analyzeGarment({
+        image: selectedSample,
+        provider: "mock",
+        role: "target",
+        roi: selectedGarmentRoi
+      });
+      setMultimodalAnalyses((currentAnalyses) => ({
+        ...currentAnalyses,
+        [sampleId]: analysis
+      }));
+      setAutoMaskNotice("多模态识别建议已生成；该结果不会直接生成蒙版或进入校色。请先确认 ROI 和最终蒙版。");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "多模态识别建议生成失败";
+      setMultimodalAnalysisErrors((currentErrors) => ({
+        ...currentErrors,
+        [sampleId]: message
+      }));
+    } finally {
+      setMultimodalAnalyzingId((currentId) => (currentId === sampleId ? null : currentId));
+    }
+  }
+
+  function handleApplyMultimodalSuggestedRoi() {
+    if (!selectedMultimodalAnalysis?.suggestedRoi) {
+      setAutoMaskNotice("当前没有可应用的建议 ROI");
+      return;
+    }
+
+    handleGarmentRoiChange(selectedMultimodalAnalysis.suggestedRoi);
+    setAutoMaskNotice("已应用多模态建议 ROI。请运行现有蒙版识别并确认结果，必要时使用手动蒙版后再校色。");
   }
 
   function handleClearGarmentRoi() {
@@ -1797,10 +1858,13 @@ export default function App() {
             isBatchColoring={isBatchColoring}
             isMaskVisible={isMaskVisible}
             isColorTransferRunning={isColorTransferRunning}
+            isMultimodalAnalyzing={multimodalAnalyzingId === selectedSampleId}
             maskEditMode={maskEditMode}
             maskOpacity={maskOpacity}
             maskFeather={maskFeather}
             maskTool={maskTool}
+            multimodalAnalysis={selectedMultimodalAnalysis}
+            multimodalAnalysisError={selectedMultimodalAnalysisError}
             referenceMaskStatus={referenceMaskStatus}
             selectedSampleMaskStatus={selectedSampleMaskStatus}
             segmentationProviderType={segmentationProviderType}
@@ -1819,6 +1883,8 @@ export default function App() {
             onMaskEditModeChange={handleMaskEditModeChange}
             onMaskFeatherChange={setMaskFeather}
             onMaskToolChange={setMaskTool}
+            onAnalyzeGarment={handleAnalyzeSelectedGarment}
+            onApplyMultimodalSuggestedRoi={handleApplyMultimodalSuggestedRoi}
             onRedoMask={handleRedoMask}
             onRegenerateAutoMask={handleRegenerateAutoMask}
             onResetAdjustmentParam={handleResetAdjustmentParam}
