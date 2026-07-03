@@ -10,6 +10,8 @@ from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 
+from multimodal import get_multimodal_provider
+from multimodal.schemas import GarmentAnalysisInput, normalize_roi
 from segmenters import SegmentInput, get_segmenter
 
 
@@ -114,6 +116,65 @@ def save_api_input_debug_image(
         )
     except Exception as exc:
         print(f"[ai-server] debug input save failed: {exc}", flush=True)
+
+
+@app.post("/analyze-garment")
+async def analyze_garment(
+    image: UploadFile = File(...),
+    role: str = Form(default="target"),
+    roi: Optional[str] = Form(default=None),
+    provider: str = Form(default="mock"),
+) -> Dict[str, object]:
+    normalized_role = role.strip().lower()
+    if normalized_role not in {"source", "target"}:
+        return {
+            "success": False,
+            "message": "role 必须是 source 或 target",
+        }
+
+    try:
+        image_bytes = await image.read()
+        source_image = Image.open(BytesIO(image_bytes))
+        source_image.load()
+        source_image = source_image.convert("RGB")
+    except Exception:
+        return {
+            "success": False,
+            "message": "无法读取图片",
+        }
+
+    try:
+        parsed_roi = normalize_roi(
+            parse_json_field(roi),
+            source_image.size[0],
+            source_image.size[1],
+        )
+        multimodal_provider = get_multimodal_provider(provider)
+        result = multimodal_provider.analyze(
+            GarmentAnalysisInput(
+                image=source_image,
+                file_name=image.filename or "uploaded-image",
+                role=normalized_role,
+                roi=parsed_roi,
+            )
+        )
+    except ValueError as exc:
+        return {
+            "success": False,
+            "message": str(exc),
+        }
+    except Exception as exc:
+        print(f"[ai-server] multimodal analysis failed: {exc}", flush=True)
+        return {
+            "success": False,
+            "message": "多模态识别建议生成失败",
+        }
+
+    return {
+        "success": True,
+        **result.to_response(),
+        "message": "mock multimodal analysis completed",
+    }
 
 
 @app.post("/segment-garment")
