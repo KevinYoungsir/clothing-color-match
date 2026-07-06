@@ -192,6 +192,8 @@ Use `ai-server/scripts/verify_runninghub_llm_vlm.py` to validate ready, missing-
 
 The RunningHub `llm_vlm` path has also completed a sanitized real-call validation. Natural-language categories and risk tags are normalized into stable internal identifiers while their raw values remain available for diagnostics. The result is still advisory: the frontend and Electron never store the Key, and users must confirm ROI / mask before color transfer. See `docs/runninghub-live-verification.md`.
 
+Use `ai-server/scripts/run_runninghub_vlm_regression.py` for a sanitized 5-10 image regression. Its default dry-run mode sends no requests; real calls require explicit `--live` plus backend-only environment configuration. Generated JSON and source images must remain outside Git. See `docs/runninghub-vlm-multi-sample-regression.md`.
+
 Optional debug output:
 
 ```powershell

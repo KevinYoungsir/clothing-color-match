@@ -124,6 +124,8 @@ It verifies:
 
 For a real small-sample check, use only approved non-sensitive images and inspect the advice before applying the ROI. Never treat a successful VLM response as a final mask.
 
+For a repeatable 5-10 image live regression, use `scripts/run_runninghub_vlm_regression.py`. It requires an explicit `--live` opt-in, writes only sanitized result fields, continues after per-image failures, and summarizes category/risk distributions and ROI safety. See `docs/runninghub-vlm-multi-sample-regression.md`.
+
 ## Frontend Behavior
 
 Select `RunningHub` in the existing multimodal suggestion panel. The panel displays category, description, confidence, risk tags, suggested ROI, the manual-mask recommendation, and the user message.
