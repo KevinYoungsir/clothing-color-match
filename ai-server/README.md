@@ -458,6 +458,8 @@ See `docs/runninghub-llm-vlm-integration.md` for the full request contract and s
 
 A sanitized real-call validation has completed successfully. RunningHub natural-language categories and risk tags are normalized before they reach the UI, with raw values retained only as advisory diagnostics. The Key remains backend-only, and users must still confirm ROI / mask before color transfer. See `docs/runninghub-live-verification.md`.
 
+For multi-sample regression, run `scripts/run_runninghub_vlm_regression.py`. It scans a local image directory, defaults to a no-network dry run, and requires explicit `--live` before contacting RunningHub. The JSON output is sanitized and includes per-image advisory results plus category, risk-tag, ROI, and direct-color-transfer safety summaries. Keep images and generated JSON out of Git; see `docs/runninghub-vlm-multi-sample-regression.md`.
+
 ### `POST /segment-garment`
 
 Form fields:
