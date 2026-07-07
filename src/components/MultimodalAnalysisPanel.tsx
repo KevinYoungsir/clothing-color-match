@@ -17,10 +17,12 @@ type MultimodalAnalysisPanelProps = {
 const riskLabels: Record<string, string> = {
   striped_pattern: "条纹图案",
   logo_present: "包含 Logo",
+  graphic_print: "图案印花",
   dark_fabric: "深色面料",
   light_fabric: "浅色面料",
   hanger_present: "检测到衣架",
   metal_clip_present: "检测到金属夹",
+  metal_hook_present: "检测到金属挂钩",
   complex_background: "复杂背景",
   edge_touching: "主体贴边",
   folded_garment: "服装折叠",
@@ -54,6 +56,28 @@ const riskLabels: Record<string, string> = {
   runninghub_invalid_response: "RunningHub 返回异常",
   runninghub_provider_disabled: "RunningHub adapter 未启用",
   runninghub_provider_error: "RunningHub 服务异常"
+};
+
+const categoryLabels: Record<string, string> = {
+  polo: "Polo 衫",
+  tshirt: "T 恤",
+  shirt: "衬衫",
+  jacket: "夹克 / 外套",
+  trousers: "长裤",
+  jeans: "牛仔裤",
+  shorts: "短裤",
+  knitwear: "针织衫",
+  hoodie: "连帽衫",
+  sweatshirt: "卫衣 / 运动衫",
+  vest: "马甲",
+  unknown: "未识别"
+};
+
+const roiQualityLabels: Record<string, string> = {
+  large_roi: "ROI 范围较大，建议人工确认范围。",
+  full_image_roi: "ROI 接近整图，建议重新确认服装主体范围。",
+  edge_touching_roi: "ROI 贴边，建议检查主体边缘。",
+  small_roi: "ROI 过小，建议重新选择或手动框选。"
 };
 
 const providerStatusLabels: Record<string, string> = {
@@ -148,7 +172,10 @@ export function MultimodalAnalysisPanel({
             <span className="font-semibold">{analysis.garmentDescription}</span>
             <span className="shrink-0 text-zinc-500">{Math.round(analysis.confidence * 100)}%</span>
           </div>
-          <p className="text-zinc-600">分类：{analysis.garmentCategory}</p>
+          <p className="text-zinc-600">
+            标准类别：{categoryLabels[analysis.garmentCategory] ?? analysis.garmentCategory}
+            （{analysis.garmentCategory}）
+          </p>
           {analysis.rawGarmentCategory &&
           analysis.rawGarmentCategory.toLowerCase() !== analysis.garmentCategory.toLowerCase() ? (
             <p className="text-zinc-500">原始识别：{analysis.rawGarmentCategory}</p>
@@ -167,6 +194,13 @@ export function MultimodalAnalysisPanel({
           ) : (
             <p className="text-emerald-700">未检测到风险标签，仍需确认实际蒙版。</p>
           )}
+          {analysis.roiQualityFlags.length > 0 ? (
+            <div className="space-y-1 rounded bg-sky-50 px-2 py-2 text-sky-800">
+              {analysis.roiQualityFlags.map((flag) => (
+                <p key={flag}>{roiQualityLabels[flag] ?? flag}</p>
+              ))}
+            </div>
+          ) : null}
           <p className="leading-5">{analysis.userMessage}</p>
           {analysis.recommendManualMask ? (
             <p className="rounded bg-amber-50 px-2 py-2 leading-5 text-amber-800">

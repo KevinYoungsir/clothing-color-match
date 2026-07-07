@@ -159,6 +159,8 @@ def analyze_image(
             "confidence": confidence,
             "riskTags": response["riskTags"],
             "rawRiskTags": response["rawRiskTags"],
+            "roiCoverageRatio": response["roiCoverageRatio"],
+            "roiQualityFlags": response["roiQualityFlags"],
             "recommendManualMask": response["recommendManualMask"],
             "shouldApplyDirectlyToColorTransfer": response[
                 "shouldApplyDirectlyToColorTransfer"
@@ -180,6 +182,8 @@ def analyze_image(
             "confidence": 0.0,
             "riskTags": [],
             "rawRiskTags": [],
+            "roiCoverageRatio": None,
+            "roiQualityFlags": [],
             "recommendManualMask": True,
             "shouldApplyDirectlyToColorTransfer": False,
             "roiInsideImage": None,
@@ -190,6 +194,7 @@ def analyze_image(
 def build_summary(results: Sequence[Dict[str, object]]) -> Dict[str, object]:
     category_distribution: Counter[str] = Counter()
     risk_distribution: Counter[str] = Counter()
+    roi_quality_distribution: Counter[str] = Counter()
     for result in results:
         category = result.get("garmentCategory")
         if isinstance(category, str):
@@ -197,6 +202,9 @@ def build_summary(results: Sequence[Dict[str, object]]) -> Dict[str, object]:
         risk_tags = result.get("riskTags")
         if isinstance(risk_tags, list):
             risk_distribution.update(str(tag) for tag in risk_tags)
+        roi_quality_flags = result.get("roiQualityFlags")
+        if isinstance(roi_quality_flags, list):
+            roi_quality_distribution.update(str(flag) for flag in roi_quality_flags)
 
     total = len(results)
     success_count = sum(result.get("success") is True for result in results)
@@ -213,6 +221,21 @@ def build_summary(results: Sequence[Dict[str, object]]) -> Dict[str, object]:
         ),
         "categoryDistribution": dict(sorted(category_distribution.items())),
         "riskTagDistribution": dict(sorted(risk_distribution.items())),
+        "roiQualityFlagDistribution": dict(sorted(roi_quality_distribution.items())),
+        "veryLargeRoiCount": sum(
+            bool(
+                {"large_roi", "full_image_roi"}.intersection(
+                    result.get("roiQualityFlags", [])
+                )
+            )
+            for result in results
+        ),
+        "fullImageLikeRoiCount": sum(
+            "full_image_roi" in result.get("roiQualityFlags", []) for result in results
+        ),
+        "edgeTouchingRoiCount": sum(
+            "edge_touching_roi" in result.get("roiQualityFlags", []) for result in results
+        ),
         "allShouldApplyDirectlyToColorTransferFalse": all(
             result.get("shouldApplyDirectlyToColorTransfer") is False for result in results
         ),

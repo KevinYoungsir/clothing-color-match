@@ -78,6 +78,16 @@ Each live result records:
 
 The summary includes total, success/failure counts, parse failures, invalid ROI count, manual-mask recommendation count, category distribution, risk-tag distribution, and the global direct-color-transfer safety assertion.
 
+It also reports `roiCoverageRatio`, `roiQualityFlags`, `roiQualityFlagDistribution`, and counts for very-large, full-image-like, and edge-touching ROI suggestions. These are advisory diagnostics only and do not replace segmentation ROI safety gates.
+
+## Ten-Sample Normalization Baseline
+
+The first live 10-image run completed with 10 successful responses, no parse failures, no invalid ROI, and all direct-color-transfer flags set to `false`. Eight samples recommended a manual mask.
+
+The follow-up normalization handles camelCase, kebab-case, and natural-language forms such as `complexBackground`, `graphicPrint`, `edgeTouching`, `containsHanger`, `stripedPattern`, and `containsMetalHook`. Successfully mapped tags no longer also produce `unknown_risk`; fully unknown values are collapsed to one `unknown_risk` while raw tags remain available for review.
+
+`sweatshirt` now remains a separate category unless the raw category or description explicitly identifies a hood. Suggested ROI coverage is reported separately from model risk tags as `large_roi`, `full_image_roi`, `edge_touching_roi`, or `small_roi`.
+
 ## Pass Criteria
 
 - The real API is callable for the test batch.

@@ -15,6 +15,8 @@ export type MultimodalAnalysisResult = {
   confidence: number;
   riskTags: string[];
   rawRiskTags: string[];
+  roiCoverageRatio: number | null;
+  roiQualityFlags: string[];
   containsHanger: boolean;
   containsMetalClip: boolean;
   edgeTouching: boolean;
@@ -119,6 +121,13 @@ export async function analyzeGarment(
     confidence: Math.max(0, Math.min(1, Number(payload.confidence ?? 0))),
     riskTags: Array.isArray(payload.riskTags) ? payload.riskTags.map(String) : [],
     rawRiskTags: Array.isArray(payload.rawRiskTags) ? payload.rawRiskTags.map(String) : [],
+    roiCoverageRatio:
+      typeof payload.roiCoverageRatio === "number" && Number.isFinite(payload.roiCoverageRatio)
+        ? payload.roiCoverageRatio
+        : null,
+    roiQualityFlags: Array.isArray(payload.roiQualityFlags)
+      ? payload.roiQualityFlags.map(String)
+      : [],
     containsHanger: payload.containsHanger === true,
     containsMetalClip: payload.containsMetalClip === true,
     edgeTouching: payload.edgeTouching === true,

@@ -188,6 +188,7 @@ def verify_success() -> Dict[str, object]:
     assert result.raw_garment_category == "polo shirt"
     assert result.risk_tags == ("striped_pattern",)
     assert result.raw_risk_tags == ("striped pattern",)
+    assert result.roi_quality_flags == ()
     assert result.recommend_manual_mask is False
     assert result.suggested_roi is not None
     assert response["shouldApplyDirectlyToColorTransfer"] is False
@@ -203,6 +204,68 @@ def verify_success() -> Dict[str, object]:
     )
     assert high_risk_result.risk_tags == ("hanger_present",)
     assert high_risk_result.recommend_manual_mask is True
+
+    assert runninghub_provider.normalize_garment_category("sweatshirt") == "sweatshirt"
+    assert runninghub_provider.normalize_garment_category("polo shirt") == "polo"
+    assert runninghub_provider.normalize_garment_category("t-shirt") == "tshirt"
+    assert runninghub_provider.normalize_garment_category("dress shirt") == "shirt"
+    assert runninghub_provider.normalize_garment_category("jacket") == "jacket"
+    assert runninghub_provider.normalize_garment_category("slacks") == "trousers"
+    assert (
+        runninghub_provider.normalize_garment_category(
+            "sweatshirt",
+            "hooded sweatshirt with drawcord",
+        )
+        == "hoodie"
+    )
+    normalized_live_tags = runninghub_provider.normalize_risk_tags(
+        [
+            "complexBackground",
+            "graphicPrint",
+            "edge-touching",
+            "containsHanger",
+            "stripedPattern",
+            "containsMetalHook",
+            "close-up",
+            "partial-view",
+            "chest logo",
+            "horizontal stripes",
+            "unmappedSampleRisk",
+            "anotherUnknownRisk",
+        ]
+    )
+    assert normalized_live_tags == [
+        "complex_background",
+        "graphic_print",
+        "edge_touching",
+        "hanger_present",
+        "striped_pattern",
+        "metal_hook_present",
+        "closeup_detail",
+        "partial_garment",
+        "logo_present",
+        "unknown_risk",
+    ]
+
+    large_roi_payload = json.loads(content)
+    large_roi_payload["suggestedRoi"] = {"x": 0, "y": 0, "width": 320, "height": 470}
+    large_roi_result = runninghub_provider.parse_runninghub_vlm_payload(
+        large_roi_payload,
+        make_input(),
+    )
+    assert large_roi_result.roi_quality_flags == (
+        "full_image_roi",
+        "edge_touching_roi",
+    )
+    assert large_roi_result.recommend_manual_mask is True
+
+    small_roi_payload = json.loads(content)
+    small_roi_payload["suggestedRoi"] = {"x": 10, "y": 10, "width": 20, "height": 20}
+    small_roi_result = runninghub_provider.parse_runninghub_vlm_payload(
+        small_roi_payload,
+        make_input(),
+    )
+    assert small_roi_result.roi_quality_flags == ("small_roi",)
     return {
         "status": "success",
         "providerStatus": result.provider_status,
@@ -213,6 +276,8 @@ def verify_success() -> Dict[str, object]:
         "suggestedRoi": result.suggested_roi.to_response(),
         "usesImageDataUrl": True,
         "highRiskManualMaskPromoted": True,
+        "normalizationRegressionCovered": True,
+        "roiQualityFlagsCovered": True,
     }
 
 
@@ -253,6 +318,8 @@ def verify_live(image_path: Path) -> None:
                 "confidence",
                 "riskTags",
                 "rawRiskTags",
+                "roiCoverageRatio",
+                "roiQualityFlags",
                 "recommendManualMask",
                 "shouldApplyDirectlyToColorTransfer",
             )
