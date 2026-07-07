@@ -106,6 +106,128 @@ const providerDescriptions: Record<MultimodalProviderType, string> = {
   runninghub: "runninghub（仅后端环境变量）"
 };
 
+type SuggestedRoiPreviewProps = {
+  coverageRatio: number | null;
+  imageSize: {
+    width: number;
+    height: number;
+  };
+  roi: NonNullable<MultimodalAnalysisResult["suggestedRoi"]>;
+  roiQualityFlags: string[];
+};
+
+function formatPercent(value: number | null) {
+  if (value === null || !Number.isFinite(value)) {
+    return "--";
+  }
+
+  return `${Math.round(value * 100)}%`;
+}
+
+function getCoverageRatio(
+  roi: NonNullable<MultimodalAnalysisResult["suggestedRoi"]>,
+  imageSize: MultimodalAnalysisResult["imageSize"],
+  serverCoverageRatio: number | null
+) {
+  if (serverCoverageRatio !== null && Number.isFinite(serverCoverageRatio)) {
+    return Math.max(0, Math.min(1, serverCoverageRatio));
+  }
+
+  const imageArea = imageSize.width * imageSize.height;
+  if (imageArea <= 0) {
+    return null;
+  }
+
+  return Math.max(0, Math.min(1, (roi.width * roi.height) / imageArea));
+}
+
+function SuggestedRoiPreview({
+  coverageRatio,
+  imageSize,
+  roi,
+  roiQualityFlags
+}: SuggestedRoiPreviewProps) {
+  const hasFullImageRisk = roiQualityFlags.includes("full_image_roi");
+  const hasEdgeRisk = roiQualityFlags.includes("edge_touching_roi");
+  const hasSmallRisk = roiQualityFlags.includes("small_roi");
+  const hasLargeRisk = roiQualityFlags.includes("large_roi");
+  const roiStroke = hasFullImageRisk || hasLargeRisk
+    ? "#f59e0b"
+    : hasEdgeRisk || hasSmallRisk
+      ? "#0ea5e9"
+      : "#14b8a6";
+
+  return (
+    <div className="rounded-md border border-zinc-200 bg-white p-2">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs font-semibold text-zinc-700">建议 ROI 预览</span>
+        <span className="shrink-0 text-[11px] text-zinc-500">
+          覆盖 {formatPercent(coverageRatio)}
+        </span>
+      </div>
+      <div className="mt-2 overflow-hidden rounded border border-zinc-200 bg-zinc-50">
+        <svg
+          aria-label="多模态建议 ROI 比例示意图"
+          className="block h-44 w-full"
+          preserveAspectRatio="xMidYMid meet"
+          role="img"
+          viewBox={`0 0 ${imageSize.width} ${imageSize.height}`}
+        >
+          <rect fill="#f4f4f5" height={imageSize.height} width={imageSize.width} x="0" y="0" />
+          <line
+            stroke="#d4d4d8"
+            strokeDasharray="10 10"
+            strokeWidth={Math.max(1, imageSize.width * 0.0015)}
+            x1={imageSize.width / 3}
+            x2={imageSize.width / 3}
+            y1="0"
+            y2={imageSize.height}
+          />
+          <line
+            stroke="#d4d4d8"
+            strokeDasharray="10 10"
+            strokeWidth={Math.max(1, imageSize.width * 0.0015)}
+            x1={(imageSize.width * 2) / 3}
+            x2={(imageSize.width * 2) / 3}
+            y1="0"
+            y2={imageSize.height}
+          />
+          <line
+            stroke="#d4d4d8"
+            strokeDasharray="10 10"
+            strokeWidth={Math.max(1, imageSize.width * 0.0015)}
+            x1="0"
+            x2={imageSize.width}
+            y1={imageSize.height / 3}
+            y2={imageSize.height / 3}
+          />
+          <line
+            stroke="#d4d4d8"
+            strokeDasharray="10 10"
+            strokeWidth={Math.max(1, imageSize.width * 0.0015)}
+            x1="0"
+            x2={imageSize.width}
+            y1={(imageSize.height * 2) / 3}
+            y2={(imageSize.height * 2) / 3}
+          />
+          <rect
+            fill="rgba(20, 184, 166, 0.18)"
+            height={roi.height}
+            stroke={roiStroke}
+            strokeWidth={Math.max(2, imageSize.width * 0.004)}
+            width={roi.width}
+            x={roi.x}
+            y={roi.y}
+          />
+        </svg>
+      </div>
+      <p className="mt-2 text-[11px] leading-4 text-zinc-500">
+        比例示意图，不修改原图；请以画布中的 ROI / 蒙版确认结果为准。
+      </p>
+    </div>
+  );
+}
+
 export function MultimodalAnalysisPanel({
   analysis,
   error,
@@ -116,6 +238,13 @@ export function MultimodalAnalysisPanel({
   onApplySuggestedRoi,
   onProviderChange
 }: MultimodalAnalysisPanelProps) {
+  const roiCoverageRatio = analysis?.suggestedRoi
+    ? getCoverageRatio(analysis.suggestedRoi, analysis.imageSize, analysis.roiCoverageRatio)
+    : null;
+  const hasFullImageRoi = analysis?.roiQualityFlags.includes("full_image_roi") ?? false;
+  const hasEdgeTouchingRoi = analysis?.roiQualityFlags.includes("edge_touching_roi") ?? false;
+  const hasSmallRoi = analysis?.roiQualityFlags.includes("small_roi") ?? false;
+
   return (
     <section className="border-b border-zinc-200 pb-5">
       <h3 className="text-sm font-semibold text-zinc-800">多模态识别建议</h3>
@@ -201,24 +330,54 @@ export function MultimodalAnalysisPanel({
               ))}
             </div>
           ) : null}
+          {hasFullImageRoi ? (
+            <p className="rounded bg-amber-50 px-2 py-2 leading-5 text-amber-800">
+              AI 建议范围接近整张图片，建议人工确认是否需要缩小到服装主体。
+            </p>
+          ) : null}
+          {hasEdgeTouchingRoi ? (
+            <p className="rounded bg-sky-50 px-2 py-2 leading-5 text-sky-800">
+              AI 建议范围贴近图片边缘，请检查服装边缘是否完整。
+            </p>
+          ) : null}
+          {hasSmallRoi ? (
+            <p className="rounded bg-amber-50 px-2 py-2 leading-5 text-amber-800">
+              AI 建议范围较小，可能只覆盖局部细节，请确认是否符合校色目标。
+            </p>
+          ) : null}
           <p className="leading-5">{analysis.userMessage}</p>
           {analysis.recommendManualMask ? (
             <p className="rounded bg-amber-50 px-2 py-2 leading-5 text-amber-800">
-              检测到高风险场景，建议使用手动蒙版精修校色区域。
+              检测到高风险场景，建议手动确认蒙版后再进行校色。
             </p>
           ) : null}
-          {analysis.success && analysis.suggestedRoi ? (
+          {analysis.suggestedRoi ? (
             <div className="space-y-2">
+              <SuggestedRoiPreview
+                coverageRatio={roiCoverageRatio}
+                imageSize={analysis.imageSize}
+                roi={analysis.suggestedRoi}
+                roiQualityFlags={analysis.roiQualityFlags}
+              />
               <p className="text-zinc-500">
-                建议 ROI：{analysis.suggestedRoi.x}, {analysis.suggestedRoi.y}, {analysis.suggestedRoi.width}, {analysis.suggestedRoi.height}
+                建议 ROI：x={analysis.suggestedRoi.x}，y={analysis.suggestedRoi.y}，
+                w={analysis.suggestedRoi.width}，h={analysis.suggestedRoi.height}
+              </p>
+              <p className="text-zinc-500">
+                图片尺寸：{analysis.imageSize.width} × {analysis.imageSize.height} · ROI 覆盖比例：
+                {formatPercent(roiCoverageRatio)}
               </p>
               <button
                 className="w-full rounded-md border border-teal-500 bg-white px-3 py-2 font-semibold text-teal-700 hover:bg-teal-50"
+                disabled={!analysis.success}
                 onClick={onApplySuggestedRoi}
                 type="button"
               >
                 应用建议 ROI
               </button>
+              <p className="rounded bg-zinc-100 px-2 py-2 leading-5 text-zinc-600">
+                仅应用框选范围，不会自动校色、不会生成最终蒙版，也不会进入导出。
+              </p>
             </div>
           ) : null}
           <p className="leading-5 text-zinc-500">{analysis.safetyNote}</p>

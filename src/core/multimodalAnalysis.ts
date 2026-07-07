@@ -11,6 +11,10 @@ export type MultimodalAnalysisResult = {
   garmentCategory: string;
   rawGarmentCategory: string | null;
   garmentDescription: string;
+  imageSize: {
+    width: number;
+    height: number;
+  };
   suggestedRoi: GarmentRoi | null;
   confidence: number;
   riskTags: string[];
@@ -117,6 +121,10 @@ export async function analyzeGarment(
       ? String(payload.rawGarmentCategory)
       : null,
     garmentDescription: String(payload.garmentDescription ?? "服装类别待确认"),
+    imageSize: {
+      width: input.image.width,
+      height: input.image.height
+    },
     suggestedRoi: normalizeSuggestedRoi(payload.suggestedRoi, input.image),
     confidence: Math.max(0, Math.min(1, Number(payload.confidence ?? 0))),
     riskTags: Array.isArray(payload.riskTags) ? payload.riskTags.map(String) : [],
