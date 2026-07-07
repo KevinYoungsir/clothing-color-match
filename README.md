@@ -194,6 +194,8 @@ The RunningHub `llm_vlm` path has also completed a sanitized real-call validatio
 
 Use `ai-server/scripts/run_runninghub_vlm_regression.py` for a sanitized 5-10 image regression. Its default dry-run mode sends no requests; real calls require explicit `--live` plus backend-only environment configuration. Generated JSON and source images must remain outside Git. See `docs/runninghub-vlm-multi-sample-regression.md`.
 
+`/generate-garment-mask` is the AI mask pipeline scaffold. Phase 1 uses a `mock_mask` provider to return an editable mask PNG and a `runninghub_mask` skeleton that fails safely until a real RunningHub segmentation workflow is configured. See `docs/runninghub-ai-mask-pipeline.md`.
+
 Optional debug output:
 
 ```powershell
@@ -315,6 +317,7 @@ python scripts\verify_lightweight_image.py `
 - No-ROI success on high-risk images should be manually inspected before production export.
 - If a result looks wrong, edit the mask manually instead of forcing AI success.
 - Multimodal analysis provides category, risk, and ROI suggestions only. It never writes the final mask or directly enters color transfer.
+- AI mask generation can write an editable target mask only after the user clicks "应用 AI 蒙版"; it still does not trigger color transfer or export automatically.
 
 ## Known Limitations
 

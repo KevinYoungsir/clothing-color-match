@@ -460,6 +460,37 @@ A sanitized real-call validation has completed successfully. RunningHub natural-
 
 For multi-sample regression, run `scripts/run_runninghub_vlm_regression.py`. It scans a local image directory, defaults to a no-network dry run, and requires explicit `--live` before contacting RunningHub. The JSON output is sanitized and includes per-image advisory results plus category, risk-tag, ROI, and direct-color-transfer safety summaries. Keep images and generated JSON out of Git; see `docs/runninghub-vlm-multi-sample-regression.md`.
 
+### `POST /generate-garment-mask`
+
+This endpoint is the Phase 1 AI mask pipeline scaffold. It is separate from
+`/analyze-garment` advisory results and from `/segment-garment` segmentation
+quality gates.
+
+Form fields:
+
+- `image`: uploaded image file.
+- `provider`: `mock_mask` (default) or `runninghub_mask`.
+- `role`: normally `target`.
+- `roi`: optional JSON string.
+- `garmentCategory`: optional advisory category.
+- `prompt` / `targetLabel`: reserved for future workflow prompts.
+
+`mock_mask` returns a same-size base64 PNG alpha mask from the provided ROI, or
+a centered default rectangle when no ROI is supplied. It always marks the result
+as needing manual confirmation because it is only a pipeline scaffold.
+
+`runninghub_mask` is a safe skeleton for a future RunningHub segmentation
+workflow. It reads only backend environment variables such as
+`RUNNINGHUB_MASK_ENABLE_REAL_CALL`, `RUNNINGHUB_MASK_API_KEY`,
+`RUNNINGHUB_MASK_WORKFLOW_ID`, `RUNNINGHUB_MASK_APP_ID`, and
+`RUNNINGHUB_MASK_NODE_INFO`. Until a real workflow contract is validated, it
+returns a safe failure instead of pretending to generate a real mask.
+
+All responses set `shouldApplyDirectlyToColorTransfer: false`. The frontend can
+apply a successful mask into the editable target mask state, but color transfer
+still requires a separate user action after mask review. See
+`docs/runninghub-ai-mask-pipeline.md`.
+
 ### `POST /segment-garment`
 
 Form fields:

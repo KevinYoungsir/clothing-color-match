@@ -30,6 +30,17 @@ class GarmentAnalysisInput:
 
 
 @dataclass(frozen=True)
+class GarmentMaskInput:
+    image: Image.Image
+    file_name: str
+    role: str
+    roi: Optional[SuggestedRoi]
+    garment_category: Optional[str] = None
+    prompt: Optional[str] = None
+    target_label: str = "garment"
+
+
+@dataclass(frozen=True)
 class GarmentAnalysisResult:
     provider: str
     garment_category: str
@@ -77,6 +88,47 @@ class GarmentAnalysisResult:
             "userMessage": self.user_message,
             "shouldApplyDirectlyToColorTransfer": False,
             "safetyNote": self.safety_note,
+        }
+
+
+@dataclass(frozen=True)
+class GarmentMaskResult:
+    provider: str
+    provider_status: str
+    garment_category: str
+    confidence: float
+    mask_png_base64: Optional[str]
+    mask_width: int
+    mask_height: int
+    mask_coverage_ratio: Optional[float]
+    mask_quality_flags: Tuple[str, ...]
+    recommend_manual_refine: bool
+    user_message: str
+    success: bool = True
+    mode: str = "mask"
+    error_code: Optional[str] = None
+    raw_garment_category: Optional[str] = None
+    suggested_roi: Optional[SuggestedRoi] = None
+
+    def to_response(self) -> Dict[str, object]:
+        return {
+            "success": self.success,
+            "provider": self.provider,
+            "providerStatus": self.provider_status,
+            "mode": self.mode,
+            "errorCode": self.error_code,
+            "garmentCategory": self.garment_category,
+            "rawGarmentCategory": self.raw_garment_category,
+            "confidence": self.confidence,
+            "suggestedRoi": self.suggested_roi.to_response() if self.suggested_roi else None,
+            "maskPngBase64": self.mask_png_base64,
+            "maskWidth": self.mask_width,
+            "maskHeight": self.mask_height,
+            "maskCoverageRatio": self.mask_coverage_ratio,
+            "maskQualityFlags": list(self.mask_quality_flags),
+            "recommendManualRefine": self.recommend_manual_refine,
+            "shouldApplyDirectlyToColorTransfer": False,
+            "userMessage": self.user_message,
         }
 
 

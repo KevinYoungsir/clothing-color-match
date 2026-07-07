@@ -2,15 +2,22 @@ import type {
   MultimodalAnalysisResult,
   MultimodalProviderType
 } from "../core/multimodalAnalysis";
+import type { GarmentMaskResult } from "../core/multimodalMask";
 
 type MultimodalAnalysisPanelProps = {
   analysis: MultimodalAnalysisResult | null;
+  aiMaskError: string | null;
+  aiMaskResult: GarmentMaskResult | null;
   error: string | null;
+  isGeneratingAiMask: boolean;
   hasSelectedImage: boolean;
   isAnalyzing: boolean;
   provider: MultimodalProviderType;
   onAnalyze: () => void;
+  onApplyAiMask: () => void;
   onApplySuggestedRoi: () => void;
+  onClearAiMaskPreview: () => void;
+  onGenerateAiMask: () => void;
   onProviderChange: (provider: MultimodalProviderType) => void;
 };
 
@@ -80,6 +87,24 @@ const roiQualityLabels: Record<string, string> = {
   small_roi: "ROI 过小，建议重新选择或手动框选。"
 };
 
+const maskQualityLabels: Record<string, string> = {
+  mock_mask: "mock/offline 演示蒙版",
+  real_mask: "真实 AI 蒙版",
+  empty_mask: "空蒙版",
+  small_mask: "蒙版范围过小",
+  large_mask: "蒙版范围较大",
+  full_image_mask: "蒙版接近整图",
+  edge_touching_mask: "蒙版贴边",
+  multiple_components: "多块不连续区域",
+  needs_manual_confirmation: "需要人工确认",
+  invalid_mask_size: "蒙版尺寸异常",
+  mask_request_failed: "蒙版请求失败",
+  runninghub_mask_real_call_disabled: "RunningHub mask 真实调用未启用",
+  runninghub_mask_api_key_missing: "RunningHub mask Key 未配置",
+  runninghub_mask_workflow_config_missing: "RunningHub mask workflow 未配置",
+  runninghub_mask_workflow_not_implemented: "RunningHub mask workflow 未实现"
+};
+
 const providerStatusLabels: Record<string, string> = {
   ready: "可用",
   missing_api_key: "缺少 API Key",
@@ -116,12 +141,47 @@ type SuggestedRoiPreviewProps = {
   roiQualityFlags: string[];
 };
 
+type AiMaskPreviewProps = {
+  result: GarmentMaskResult;
+};
+
 function formatPercent(value: number | null) {
   if (value === null || !Number.isFinite(value)) {
     return "--";
   }
 
   return `${Math.round(value * 100)}%`;
+}
+
+function AiMaskPreview({ result }: AiMaskPreviewProps) {
+  const imageSource = result.maskPngBase64
+    ? `data:image/png;base64,${result.maskPngBase64}`
+    : null;
+
+  return (
+    <div className="rounded-md border border-zinc-200 bg-white p-2">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs font-semibold text-zinc-700">AI 蒙版预览</span>
+        <span className="shrink-0 text-[11px] text-zinc-500">
+          覆盖 {formatPercent(result.maskCoverageRatio)}
+        </span>
+      </div>
+      <div className="canvas-checker mt-2 grid h-44 place-items-center overflow-hidden rounded border border-zinc-200 bg-zinc-50">
+        {imageSource ? (
+          <img
+            alt="AI 蒙版预览"
+            className="max-h-full max-w-full object-contain opacity-80"
+            src={imageSource}
+          />
+        ) : (
+          <span className="text-[11px] text-zinc-500">暂无可预览蒙版</span>
+        )}
+      </div>
+      <p className="mt-2 text-[11px] leading-4 text-zinc-500">
+        仅显示 AI 生成的 alpha 蒙版，不修改原图；应用后仍需检查边缘并可继续手动修边。
+      </p>
+    </div>
+  );
 }
 
 function getCoverageRatio(
@@ -230,12 +290,18 @@ function SuggestedRoiPreview({
 
 export function MultimodalAnalysisPanel({
   analysis,
+  aiMaskError,
+  aiMaskResult,
   error,
   hasSelectedImage,
+  isGeneratingAiMask,
   isAnalyzing,
   provider,
   onAnalyze,
+  onApplyAiMask,
   onApplySuggestedRoi,
+  onClearAiMaskPreview,
+  onGenerateAiMask,
   onProviderChange
 }: MultimodalAnalysisPanelProps) {
   const roiCoverageRatio = analysis?.suggestedRoi
@@ -383,6 +449,86 @@ export function MultimodalAnalysisPanel({
           <p className="leading-5 text-zinc-500">{analysis.safetyNote}</p>
         </div>
       ) : null}
+
+      <div className="mt-5 border-t border-zinc-200 pt-4">
+        <h4 className="text-sm font-semibold text-zinc-800">AI 自动蒙版</h4>
+        <p className="mt-2 rounded-md bg-teal-50 px-3 py-2 text-xs leading-5 text-teal-800">
+          AI 蒙版用于自动识别服装主体并生成可编辑蒙版。当前默认使用 mock/offline provider 打通链路，
+          结果仅作为辅助；应用后仍可手动修边，不会自动校色。
+        </p>
+        <button
+          className="mt-3 w-full rounded-md bg-teal-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-teal-500 disabled:cursor-not-allowed disabled:opacity-45"
+          disabled={!hasSelectedImage || isGeneratingAiMask}
+          onClick={onGenerateAiMask}
+          type="button"
+        >
+          {isGeneratingAiMask ? "生成中..." : "生成 AI 蒙版"}
+        </button>
+        {aiMaskError ? (
+          <p className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700">
+            {aiMaskError}
+          </p>
+        ) : null}
+        {aiMaskResult ? (
+          <div className={`mt-3 space-y-2 rounded-md border p-3 text-xs ${
+            aiMaskResult.success
+              ? "border-zinc-200 bg-zinc-50 text-zinc-700"
+              : "border-amber-200 bg-amber-50 text-amber-900"
+          }`}>
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-semibold">provider：{aiMaskResult.provider}</span>
+              <span className="shrink-0 text-zinc-500">
+                {Math.round(aiMaskResult.confidence * 100)}%
+              </span>
+            </div>
+            <p className="text-zinc-500">状态：{aiMaskResult.providerStatus}</p>
+            <p className="text-zinc-500">
+              类别：{categoryLabels[aiMaskResult.garmentCategory] ?? aiMaskResult.garmentCategory}
+              （{aiMaskResult.garmentCategory}）
+            </p>
+            <p className="text-zinc-500">
+              蒙版尺寸：{aiMaskResult.maskWidth} × {aiMaskResult.maskHeight} · 覆盖比例：
+              {formatPercent(aiMaskResult.maskCoverageRatio)}
+            </p>
+            {aiMaskResult.maskQualityFlags.length > 0 ? (
+              <div className="flex flex-wrap gap-1">
+                {aiMaskResult.maskQualityFlags.map((flag) => (
+                  <span className="rounded bg-amber-100 px-2 py-1 text-amber-800" key={flag}>
+                    {maskQualityLabels[flag] ?? flag}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            {aiMaskResult.maskPngBase64 ? <AiMaskPreview result={aiMaskResult} /> : null}
+            <p className="leading-5">{aiMaskResult.userMessage}</p>
+            {aiMaskResult.recommendManualRefine ? (
+              <p className="rounded bg-amber-50 px-2 py-2 leading-5 text-amber-800">
+                建议应用后检查边缘，并用画笔 / 橡皮擦继续修边。
+              </p>
+            ) : null}
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                className="rounded-md border border-teal-500 bg-white px-3 py-2 font-semibold text-teal-700 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-45"
+                disabled={!aiMaskResult.success || !aiMaskResult.maskPngBase64}
+                onClick={onApplyAiMask}
+                type="button"
+              >
+                应用 AI 蒙版
+              </button>
+              <button
+                className="rounded-md border border-zinc-200 bg-white px-3 py-2 font-semibold text-zinc-600 hover:bg-zinc-50"
+                onClick={onClearAiMaskPreview}
+                type="button"
+              >
+                清除预览
+              </button>
+            </div>
+            <p className="rounded bg-zinc-100 px-2 py-2 leading-5 text-zinc-600">
+              应用 AI 蒙版只会写入当前样品蒙版，不会自动校色、不会导出，也不会跳过人工确认。
+            </p>
+          </div>
+        ) : null}
+      </div>
     </section>
   );
 }
