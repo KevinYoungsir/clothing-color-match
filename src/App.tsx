@@ -44,6 +44,11 @@ import {
   type MultimodalAnalysisResult,
   type MultimodalProviderType
 } from "./core/multimodalAnalysis";
+import {
+  decodeGarmentMaskResultToImageData,
+  generateGarmentMask,
+  type GarmentMaskResult
+} from "./core/multimodalMask";
 import type {
   ColorDifferenceResult,
   ColorCorrectionScope,
@@ -141,6 +146,9 @@ export default function App() {
   const [multimodalProvider, setMultimodalProvider] =
     useState<MultimodalProviderType>("mock");
   const [multimodalAnalyzingId, setMultimodalAnalyzingId] = useState<string | null>(null);
+  const [aiMaskResults, setAiMaskResults] = useState<Record<string, GarmentMaskResult>>({});
+  const [aiMaskErrors, setAiMaskErrors] = useState<Record<string, string>>({});
+  const [aiMaskGeneratingId, setAiMaskGeneratingId] = useState<string | null>(null);
   const [adjustmentError, setAdjustmentError] = useState<string | null>(null);
   const [isColorTransferRunning, setIsColorTransferRunning] = useState(false);
   const [isBatchColoring, setIsBatchColoring] = useState(false);
@@ -173,6 +181,8 @@ export default function App() {
   const selectedMultimodalAnalysisError = selectedSampleId
     ? multimodalAnalysisErrors[selectedSampleId] ?? null
     : null;
+  const selectedAiMaskResult = selectedSampleId ? aiMaskResults[selectedSampleId] ?? null : null;
+  const selectedAiMaskError = selectedSampleId ? aiMaskErrors[selectedSampleId] ?? null : null;
   const activeImage = maskEditMode === "reference" ? referenceImage : selectedSample;
   const activeMaskState = maskEditMode === "reference" ? referenceMaskState : selectedMaskState;
   const activeGarmentRoi = maskEditMode === "target" ? selectedGarmentRoi : null;
@@ -885,18 +895,27 @@ export default function App() {
       return;
     }
 
+    const sampleId = selectedSample.id;
     setGarmentRoiMap((currentRois) => ({
       ...currentRois,
-      [selectedSample.id]: roi
+      [sampleId]: roi
     }));
     setSampleMaskStatuses((currentStatuses) =>
-      currentStatuses[selectedSample.id] === "manual"
+      currentStatuses[sampleId] === "manual"
         ? currentStatuses
         : {
             ...currentStatuses,
-            [selectedSample.id]: "unrecognized"
+            [sampleId]: "unrecognized"
           }
     );
+    setAiMaskResults((currentResults) => {
+      const { [sampleId]: _removedResult, ...remainingResults } = currentResults;
+      return remainingResults;
+    });
+    setAiMaskErrors((currentErrors) => {
+      const { [sampleId]: _removedError, ...remainingErrors } = currentErrors;
+      return remainingErrors;
+    });
     invalidateAutoTargetMask(selectedSample);
     setIsRoiSelectionActive(false);
     setMaskEditMode("target");
@@ -953,6 +972,102 @@ export default function App() {
     setAutoMaskNotice("已应用多模态建议 ROI。请运行现有蒙版识别并确认结果，必要时使用手动蒙版后再校色。");
   }
 
+  async function handleGenerateAiMask() {
+    if (!selectedSample) {
+      setAutoMaskNotice("请先选择样品图");
+      return;
+    }
+
+    const sampleId = selectedSample.id;
+    setAiMaskGeneratingId(sampleId);
+    setAiMaskErrors((currentErrors) => {
+      const { [sampleId]: _removedError, ...remainingErrors } = currentErrors;
+      return remainingErrors;
+    });
+    setAiMaskResults((currentResults) => {
+      const { [sampleId]: _removedResult, ...remainingResults } = currentResults;
+      return remainingResults;
+    });
+
+    try {
+      const result = await generateGarmentMask({
+        garmentCategory: selectedMultimodalAnalysis?.garmentCategory ?? null,
+        image: selectedSample,
+        provider: "mock_mask",
+        role: "target",
+        roi: selectedGarmentRoi
+      });
+      setAiMaskResults((currentResults) => ({
+        ...currentResults,
+        [sampleId]: result
+      }));
+      setAutoMaskNotice(
+        result.success
+          ? "AI 蒙版预览已生成；应用后仍需检查边缘并确认后再校色。"
+          : result.userMessage
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "AI 蒙版生成失败";
+      setAiMaskErrors((currentErrors) => ({
+        ...currentErrors,
+        [sampleId]: message
+      }));
+      setAutoMaskNotice("AI 蒙版生成失败，请使用手动蒙版。");
+    } finally {
+      setAiMaskGeneratingId((currentId) => (currentId === sampleId ? null : currentId));
+    }
+  }
+
+  async function handleApplyAiMask() {
+    if (!selectedSample || !selectedAiMaskResult) {
+      setAutoMaskNotice("当前没有可应用的 AI 蒙版");
+      return;
+    }
+
+    try {
+      const mask = await decodeGarmentMaskResultToImageData(selectedAiMaskResult, selectedSample);
+      clearSampleDerivedResult(selectedSample.id);
+      setMaskStates((currentMasks) => ({
+        ...currentMasks,
+        [selectedSample.id]: createAutoMaskState(mask, currentMasks[selectedSample.id])
+      }));
+      setSampleMaskStatuses((currentStatuses) => ({
+        ...currentStatuses,
+        [selectedSample.id]: "auto"
+      }));
+      setMaskEditMode("target");
+      setIsMaskEditingActive(true);
+      setIsMaskVisible(true);
+      setIsRoiSelectionActive(false);
+      setColorTransferError(null);
+      setAdjustmentError(null);
+      setAutoMaskNotice("AI 蒙版已应用，请检查边缘并确认后再进行校色；可继续用画笔 / 橡皮擦修边。");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "AI 蒙版应用失败";
+      setAiMaskErrors((currentErrors) => ({
+        ...currentErrors,
+        [selectedSample.id]: message
+      }));
+      setAutoMaskNotice("AI 蒙版应用失败，请使用手动蒙版。");
+    }
+  }
+
+  function handleClearAiMaskPreview() {
+    if (!selectedSampleId) {
+      return;
+    }
+
+    setAiMaskResults((currentResults) => {
+      const { [selectedSampleId]: _removedResult, ...remainingResults } = currentResults;
+      return remainingResults;
+    });
+    setAiMaskErrors((currentErrors) => {
+      const { [selectedSampleId]: _removedError, ...remainingErrors } = currentErrors;
+      return remainingErrors;
+    });
+    setAutoMaskNotice("已清除 AI 蒙版预览。");
+  }
+
   function handleMultimodalProviderChange(provider: MultimodalProviderType) {
     setMultimodalProvider(provider);
     if (!selectedSampleId) {
@@ -983,6 +1098,14 @@ export default function App() {
     } else {
       clearSampleDerivedResult(selectedSampleId);
     }
+    setAiMaskResults((currentResults) => {
+      const { [selectedSampleId]: _removedResult, ...remainingResults } = currentResults;
+      return remainingResults;
+    });
+    setAiMaskErrors((currentErrors) => {
+      const { [selectedSampleId]: _removedError, ...remainingErrors } = currentErrors;
+      return remainingErrors;
+    });
     setIsRoiSelectionActive(false);
     setAutoMaskNotice("已清除当前样品图的服装框选区域。");
   }
@@ -1881,11 +2004,14 @@ export default function App() {
             isBatchColoring={isBatchColoring}
             isMaskVisible={isMaskVisible}
             isColorTransferRunning={isColorTransferRunning}
+            isGeneratingAiMask={aiMaskGeneratingId === selectedSampleId}
             isMultimodalAnalyzing={multimodalAnalyzingId === selectedSampleId}
             maskEditMode={maskEditMode}
             maskOpacity={maskOpacity}
             maskFeather={maskFeather}
             maskTool={maskTool}
+            aiMaskError={selectedAiMaskError}
+            aiMaskResult={selectedAiMaskResult}
             multimodalAnalysis={selectedMultimodalAnalysis}
             multimodalAnalysisError={selectedMultimodalAnalysisError}
             multimodalProvider={multimodalProvider}
@@ -1908,7 +2034,10 @@ export default function App() {
             onMaskFeatherChange={setMaskFeather}
             onMaskToolChange={setMaskTool}
             onAnalyzeGarment={handleAnalyzeSelectedGarment}
+            onApplyAiMask={handleApplyAiMask}
             onApplyMultimodalSuggestedRoi={handleApplyMultimodalSuggestedRoi}
+            onClearAiMaskPreview={handleClearAiMaskPreview}
+            onGenerateAiMask={handleGenerateAiMask}
             onMultimodalProviderChange={handleMultimodalProviderChange}
             onRedoMask={handleRedoMask}
             onRegenerateAutoMask={handleRegenerateAutoMask}

@@ -10,8 +10,8 @@ from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 
-from multimodal import get_multimodal_provider
-from multimodal.schemas import GarmentAnalysisInput, normalize_roi
+from multimodal import get_garment_mask_provider, get_multimodal_provider
+from multimodal.schemas import GarmentAnalysisInput, GarmentMaskInput, normalize_roi
 from segmenters import SegmentInput, get_segmenter
 
 
@@ -168,6 +168,76 @@ async def analyze_garment(
         return {
             "success": False,
             "message": "多模态识别建议生成失败",
+        }
+
+    return {
+        **result.to_response(),
+        "message": result.user_message,
+    }
+
+
+@app.post("/generate-garment-mask")
+async def generate_garment_mask(
+    image: UploadFile = File(...),
+    role: str = Form(default="target"),
+    roi: Optional[str] = Form(default=None),
+    provider: str = Form(default="mock_mask"),
+    garmentCategory: Optional[str] = Form(default=None),
+    prompt: Optional[str] = Form(default=None),
+    targetLabel: str = Form(default="garment"),
+) -> Dict[str, object]:
+    normalized_role = role.strip().lower()
+    if normalized_role not in {"source", "target"}:
+        return {
+            "message": "role 必须是 source 或 target",
+            "success": False,
+        }
+
+    try:
+        image_bytes = await image.read()
+        source_image = Image.open(BytesIO(image_bytes))
+        source_image.load()
+        source_image = source_image.convert("RGB")
+    except Exception:
+        return {
+            "message": "无法读取图片",
+            "success": False,
+        }
+
+    try:
+        parsed_roi = normalize_roi(
+            parse_json_field(roi),
+            source_image.size[0],
+            source_image.size[1],
+        )
+        mask_provider = get_garment_mask_provider(provider)
+        result = mask_provider.generate_mask(
+            GarmentMaskInput(
+                garment_category=garmentCategory.strip() if garmentCategory else None,
+                image=source_image,
+                file_name=image.filename or "uploaded-image",
+                prompt=prompt.strip() if prompt else None,
+                role=normalized_role,
+                roi=parsed_roi,
+                target_label=targetLabel.strip() or "garment",
+            )
+        )
+    except ValueError as exc:
+        return {
+            "message": str(exc),
+            "success": False,
+        }
+    except Exception as exc:
+        print(f"[ai-server] garment mask generation failed: {exc}", flush=True)
+        return {
+            "errorCode": "garment_mask_generation_failed",
+            "message": "AI 蒙版生成失败，请使用手动蒙版。",
+            "mode": "mask",
+            "provider": provider,
+            "providerStatus": "provider_error",
+            "recommendManualRefine": True,
+            "shouldApplyDirectlyToColorTransfer": False,
+            "success": False,
         }
 
     return {

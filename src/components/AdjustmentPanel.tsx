@@ -3,6 +3,7 @@ import type {
   MultimodalAnalysisResult,
   MultimodalProviderType
 } from "../core/multimodalAnalysis";
+import type { GarmentMaskResult } from "../core/multimodalMask";
 import { MultimodalAnalysisPanel } from "./MultimodalAnalysisPanel";
 import type {
   ColorCorrectionScope,
@@ -42,6 +43,9 @@ type AdjustmentPanelProps = {
   maskFeather: number;
   maskOpacity: number;
   maskTool: MaskTool;
+  aiMaskError: string | null;
+  aiMaskResult: GarmentMaskResult | null;
+  isGeneratingAiMask: boolean;
   multimodalAnalysis: MultimodalAnalysisResult | null;
   multimodalAnalysisError: string | null;
   multimodalProvider: MultimodalProviderType;
@@ -64,7 +68,10 @@ type AdjustmentPanelProps = {
   onMaskOpacityChange: (value: number) => void;
   onMaskToolChange: (tool: MaskTool) => void;
   onAnalyzeGarment: () => void;
+  onApplyAiMask: () => void;
   onApplyMultimodalSuggestedRoi: () => void;
+  onClearAiMaskPreview: () => void;
+  onGenerateAiMask: () => void;
   onMultimodalProviderChange: (provider: MultimodalProviderType) => void;
   onRedoMask: () => void;
   onRegenerateAutoMask: () => void;
@@ -232,6 +239,9 @@ export function AdjustmentPanel({
   maskFeather,
   maskOpacity,
   maskTool,
+  aiMaskError,
+  aiMaskResult,
+  isGeneratingAiMask,
   multimodalAnalysis,
   multimodalAnalysisError,
   multimodalProvider,
@@ -254,7 +264,10 @@ export function AdjustmentPanel({
   onMaskOpacityChange,
   onMaskToolChange,
   onAnalyzeGarment,
+  onApplyAiMask,
   onApplyMultimodalSuggestedRoi,
+  onClearAiMaskPreview,
+  onGenerateAiMask,
   onMultimodalProviderChange,
   onRedoMask,
   onRegenerateAutoMask,
@@ -301,12 +314,18 @@ export function AdjustmentPanel({
       <div className="min-h-0 flex-1 space-y-5 overflow-auto p-4">
         <MultimodalAnalysisPanel
           analysis={multimodalAnalysis}
+          aiMaskError={aiMaskError}
+          aiMaskResult={aiMaskResult}
           error={multimodalAnalysisError}
           hasSelectedImage={hasSelectedImage}
+          isGeneratingAiMask={isGeneratingAiMask}
           isAnalyzing={isMultimodalAnalyzing}
           provider={multimodalProvider}
           onAnalyze={onAnalyzeGarment}
+          onApplyAiMask={onApplyAiMask}
           onApplySuggestedRoi={onApplyMultimodalSuggestedRoi}
+          onClearAiMaskPreview={onClearAiMaskPreview}
+          onGenerateAiMask={onGenerateAiMask}
           onProviderChange={onMultimodalProviderChange}
         />
         <section>
