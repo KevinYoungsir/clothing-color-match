@@ -77,6 +77,8 @@ The provider validates every required field, boolean type, confidence range, ris
 
 RunningHub natural-language categories and risk labels are normalized into stable internal identifiers. The response also includes optional `rawGarmentCategory` and `rawRiskTags` fields for diagnostics. Unknown values become `unknown` or `unknown_risk` instead of leaking arbitrary model text into internal tags.
 
+Normalization accepts natural language, camelCase, and kebab-case risk tags. Advisory ROI quality is exposed separately through `roiCoverageRatio` and `roiQualityFlags`; large, full-image-like, edge-touching, or small ROI suggestions are UI warnings and never direct color-transfer permissions.
+
 ## Advisory-Only Safety Boundary
 
 `shouldApplyDirectlyToColorTransfer` is always `false`, including successful responses. A suggested ROI can only populate the current target ROI editor state. Applying it clears stale derived results and does not start segmentation or color transfer.

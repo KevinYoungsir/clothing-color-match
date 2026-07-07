@@ -50,6 +50,8 @@ class GarmentAnalysisResult:
     error_code: Optional[str] = None
     raw_garment_category: Optional[str] = None
     raw_risk_tags: Tuple[str, ...] = ()
+    roi_coverage_ratio: Optional[float] = None
+    roi_quality_flags: Tuple[str, ...] = ()
 
     def to_response(self) -> Dict[str, object]:
         return {
@@ -65,6 +67,8 @@ class GarmentAnalysisResult:
             "confidence": self.confidence,
             "riskTags": list(self.risk_tags),
             "rawRiskTags": list(self.raw_risk_tags),
+            "roiCoverageRatio": self.roi_coverage_ratio,
+            "roiQualityFlags": list(self.roi_quality_flags),
             "containsHanger": self.contains_hanger,
             "containsMetalClip": self.contains_metal_clip,
             "edgeTouching": self.edge_touching,

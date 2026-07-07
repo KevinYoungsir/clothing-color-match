@@ -38,7 +38,8 @@ CATEGORY_ALIASES = (
     (("denim pants", "denim trousers", "jeans", "jean"), "jeans"),
     (("trousers", "trouser", "pants", "slacks"), "trousers"),
     (("shorts", "short pants"), "shorts"),
-    (("hoodie", "sweatshirt"), "hoodie"),
+    (("hoodie", "hooded sweatshirt", "hooded top"), "hoodie"),
+    (("sweatshirt", "sweat shirt"), "sweatshirt"),
     (("knitwear", "sweater", "knit"), "knitwear"),
     (("jacket", "coat", "outerwear"), "jacket"),
     (("vest", "waistcoat"), "vest"),
@@ -48,15 +49,17 @@ RISK_TAG_ALIASES = (
     (("high contrast stripe", "high contrast pattern", "high contrast"), "high_contrast_pattern"),
     (("horizontal stripe", "striped pattern", "stripes", "stripe"), "striped_pattern"),
     (("chest logo", "logo present", "logo"), "logo_present"),
+    (("graphic print", "printed graphic", "graphic motif"), "graphic_print"),
     (("dark fabric", "black garment", "navy garment", "navy"), "dark_fabric"),
     (("light fabric", "white garment", "pale garment"), "light_fabric"),
     (("contains hanger", "hanger present", "hanger"), "hanger_present"),
     (("metal clip present", "metal clips", "metal clip", "clips", "clip"), "metal_clip_present"),
+    (("contains metal hook", "metal hook present", "metal hook"), "metal_hook_present"),
     (("touches edge", "edge touching", "cropped"), "edge_touching"),
     (("complex background", "busy background"), "complex_background"),
     (("folded garment", "folded"), "folded_garment"),
     (("wrinkled fabric", "wrinkles", "wrinkled"), "wrinkled_fabric"),
-    (("partial garment", "partially visible", "partial"), "partial_garment"),
+    (("partial garment", "partially visible", "partial view", "partial"), "partial_garment"),
     (("detail shot", "close up", "closeup"), "closeup_detail"),
     (("multiple garments", "multiple clothes"), "multiple_garments"),
     (("collar shadow",), "collar_shadow"),
@@ -69,6 +72,7 @@ HIGH_RISK_TAGS = frozenset(
     {
         "hanger_present",
         "metal_clip_present",
+        "metal_hook_present",
         "edge_touching",
         "complex_background",
         "folded_garment",
@@ -369,15 +373,23 @@ def _required_bool(payload: Dict[str, Any], field_name: str) -> bool:
 
 
 def _normalized_phrase(value: str) -> str:
-    return " ".join(re.sub(r"[^a-z0-9]+", " ", value.lower()).split())
+    camel_case_split = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", value)
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", camel_case_split.lower()).split())
 
 
 def _contains_phrase(value: str, phrase: str) -> bool:
     return f" {phrase} " in f" {value} "
 
 
-def normalize_garment_category(value: str) -> str:
+def normalize_garment_category(value: str, description: str = "") -> str:
     normalized = _normalized_phrase(value)
+    description_normalized = _normalized_phrase(description)
+    if any(
+        _contains_phrase(text, alias)
+        for text in (normalized, description_normalized)
+        for alias in ("hoodie", "hooded sweatshirt", "hooded top")
+    ):
+        return "hoodie"
     if normalized in {"unknown", "unclear", "other", ""}:
         return "unknown"
     for aliases, category in CATEGORY_ALIASES:
@@ -406,6 +418,34 @@ def normalize_risk_tags(values: List[str]) -> List[str]:
 def _append_unique(values: List[str], value: str) -> None:
     if value not in values:
         values.append(value)
+
+
+def get_roi_quality(
+    suggested_roi: Optional[SuggestedRoi],
+    image_size: tuple[int, int],
+) -> tuple[Optional[float], List[str]]:
+    if suggested_roi is None:
+        return None, []
+
+    image_width, image_height = image_size
+    image_area = image_width * image_height
+    roi_area = suggested_roi.width * suggested_roi.height
+    coverage_ratio = roi_area / image_area if image_area else 0.0
+    flags: List[str] = []
+    if coverage_ratio >= 0.95:
+        flags.append("full_image_roi")
+    elif coverage_ratio >= 0.85:
+        flags.append("large_roi")
+    if (
+        suggested_roi.x == 0
+        or suggested_roi.y == 0
+        or suggested_roi.x + suggested_roi.width >= image_width
+        or suggested_roi.y + suggested_roi.height >= image_height
+    ):
+        flags.append("edge_touching_roi")
+    if coverage_ratio <= 0.05:
+        flags.append("small_roi")
+    return round(coverage_ratio, 6), flags
 
 
 def parse_runninghub_vlm_payload(
@@ -498,6 +538,16 @@ def parse_runninghub_vlm_payload(
             raise RunningHubLlmInvalidResponseError("suggestedRoi is outside the source image")
         suggested_roi = SuggestedRoi(x=x, y=y, width=width, height=height)
 
+    roi_coverage_ratio, roi_quality_flags = get_roi_quality(
+        suggested_roi,
+        analysis_input.image.size,
+    )
+    risky_roi = any(
+        flag in {"large_roi", "full_image_roi", "edge_touching_roi"}
+        for flag in roi_quality_flags
+    )
+    recommend_manual_mask = recommend_manual_mask or risky_roi
+
     safe_user_message = user_message.strip()
     if high_risk_detected and not model_recommends_manual_mask:
         safe_user_message = (
@@ -507,6 +557,12 @@ def parse_runninghub_vlm_payload(
         safe_user_message = (
             f"{safe_user_message} 请确认主色区域与条纹区域是否都需要校色。"
         )
+    if risky_roi:
+        safe_user_message = (
+            f"{safe_user_message} 建议 ROI 范围较大或贴边，请人工确认后再使用。"
+        )
+    elif "small_roi" in roi_quality_flags:
+        safe_user_message = f"{safe_user_message} 建议 ROI 过小，请检查是否只覆盖了局部服装。"
     if "ROI" not in safe_user_message or not any(
         token in safe_user_message.lower() for token in ("mask", "蒙版")
     ):
@@ -515,13 +571,18 @@ def parse_runninghub_vlm_payload(
     return GarmentAnalysisResult(
         provider="runninghub",
         provider_status="ready",
-        garment_category=normalize_garment_category(garment_category),
+        garment_category=normalize_garment_category(
+            garment_category,
+            garment_description,
+        ),
         raw_garment_category=garment_category.strip(),
         garment_description=garment_description.strip(),
         suggested_roi=suggested_roi,
         confidence=confidence,
         risk_tags=tuple(normalized_risk_tags),
         raw_risk_tags=tuple(tag.strip() for tag in raw_risk_tags if tag.strip()),
+        roi_coverage_ratio=roi_coverage_ratio,
+        roi_quality_flags=tuple(roi_quality_flags),
         contains_hanger=contains_hanger,
         contains_metal_clip=contains_metal_clip,
         edge_touching=edge_touching,
