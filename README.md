@@ -1,106 +1,147 @@
 # Clothing Color Match Studio
 
-Clothing Color Match Studio is a garment color calibration tool for product photos, sample photos, hanger shots, model photos, and fabric/detail images. The goal is to match a target garment to a reference garment color while preserving texture, folds, lighting, patterns, shadows, and fabric detail.
+**Open-source human-in-the-loop garment color calibration for e-commerce, fashion-tech, and imaging workflows.**
 
-The current project is no longer a pure frontend MVP. It includes a React/Vite frontend and an optional FastAPI AI mask server with a lightweight ONNX garment segmentation path. The frontend can still run without the AI server by using manual masks or safe traditional fallback paths, but the current remote-AI workflow is designed around the FastAPI `/segment-garment` service.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## Project Overview
+Clothing Color Match Studio helps match a target garment to a reference color **without treating the image as a flat block of pixels**. The workflow is designed to preserve fabric texture, folds, lighting, shadows, patterns, and product detail while restricting color transfer to a validated garment region.
 
-- Upload a reference image and define the reference garment region.
-- Upload one or more target garment images.
-- Generate or edit a target mask using manual drawing, traditional segmentation, or remote AI segmentation.
-- Apply Lab-based color transfer only inside valid garment masks.
-- Block unreliable AI masks before they enter color transfer.
-- Export a single image or batch ZIP in original size, 2K, or 4K.
+The project combines editable masks, ROI guidance, segmentation quality gates, Lab-based color transfer, optional AI assistance, and batch export. AI is intentionally assistive rather than authoritative: uncertain masks are blocked or sent back for human correction instead of silently entering the final color-transfer path.
 
-## Current Architecture
+> **Project goal:** provide a practical, reusable open-source reference implementation for safe garment color calibration and image-processing workflows.
 
-```txt
+## Why This Project Exists
+
+Garment recoloring looks simple until product fidelity matters. Generic hue replacement can damage luminance and fabric detail, while fully generative editing may change construction, texture, seams, patterns, or other product attributes.
+
+This project focuses on a narrower but important problem:
+
+- use a real reference garment color
+- identify the garment region explicitly
+- keep the mask editable by a human
+- reject risky segmentation results before processing
+- transfer color primarily through Lab `a/b` channels
+- preserve target luminance and texture as much as possible
+- keep exports reproducible and reviewable
+
+This makes the project useful as a starting point for apparel e-commerce imaging, fashion catalog workflows, sample/colorway review, product-photo tooling, and computer-vision experiments involving controlled color transfer.
+
+## Core Principles
+
+### Human in the loop
+
+AI-generated masks and multimodal suggestions are not automatically trusted. Users can inspect, apply, refine, or replace them with manual masks.
+
+### Safe failure over silent corruption
+
+Low-confidence, partial, over-coverage, overly broad ROI, and risky boundary cases can be blocked before they reach color transfer.
+
+### Product-detail preservation
+
+Color transfer is designed around valid garment pixels and primarily migrates Lab chroma while preserving target luminance, texture, folds, and lighting.
+
+### Model- and provider-aware architecture
+
+The frontend can work with manual masks, while the FastAPI backend supports pluggable segmentation/advisory providers. Provider credentials remain backend-only.
+
+## Current Capabilities
+
+- Reference image upload and reference garment mask selection
+- Batch target-image upload with independent per-image mask state
+- Manual mask editor with brush, eraser, undo, redo, clear, opacity, and feather controls
+- ROI / prompt-box support for difficult images
+- Optional FastAPI remote garment segmentation
+- Lightweight ONNX segmentation path with configurable preprocessing and labels
+- Mask quality gates for cases such as `roi_too_wide`, `over_coverage`, `partial`, and `low_confidence`
+- Human-confirmed AI mask preview/application flow
+- Lab-based garment color transfer
+- Manual brightness, contrast, saturation, hue, exposure, shadows, highlights, white balance, temperature, color-strength, and texture-preservation controls
+- Single, left/right, and split comparison modes
+- Single-image download and batch ZIP export
+- Original-size, 2K, and 4K export with aspect-ratio preservation
+- Windows Electron desktop packaging proof of concept
+- Regression and release-validation scripts
+
+## Architecture
+
+```text
 React / Vite / TypeScript frontend
-  -> Canvas preview, ROI/mask editing, Lab color transfer, batch export
-  -> Remote AI provider via VITE_AI_SEGMENTATION_API
-
+  ├─ Canvas preview
+  ├─ ROI + editable mask workflow
+  ├─ Lab color transfer
+  ├─ manual adjustments
+  └─ single / batch export
+            │
+            │ optional remote AI assistance
+            ▼
 FastAPI ai-server
-  -> /health
-  -> /segment-garment
-  -> Pluggable segmenters: mock, lightweight ONNX, sam2 placeholder
-  -> ROI-first inference, postprocess, and mask quality gates
+  ├─ /health
+  ├─ /segment-garment
+  ├─ /analyze-garment
+  ├─ /generate-garment-mask
+  ├─ pluggable providers / segmenters
+  ├─ lightweight ONNX inference
+  └─ ROI-first post-processing + quality gates
 
 Local model files
-  -> ai-server/models/model.onnx
-  -> ignored by Git
+  └─ kept outside Git
 ```
 
-The current stable safety baseline is documented around `stable-frontend-color-transfer-safety-20260616`.
+## Safety Model
 
-## Features
+The color-transfer path intentionally has explicit boundaries:
 
-- Reference image upload and reference mask selection.
-- Target image batch upload with per-image mask state.
-- Manual mask editing with brush, eraser, undo, redo, clear, opacity, and feather controls.
-- Remote AI garment segmentation through the FastAPI server.
-- Lightweight ONNX segmentation with configurable labels, input size, normalization, thresholding, gamma, blur, ROI-first inference, and candidate scoring.
-- ROI / promptBox support for target masks.
-- Safety gates for `roi_too_wide`, `over_coverage`, `partial`, `low_confidence`, sparse candidates, low fill ratio, and risky boundary contact.
-- Target remote-AI failures do not silently enter unsafe traditional fallback.
-- ROI / mask changes clear stale `processedImages` / `adjustedImages` results before export reuse.
-- Lab color transfer that primarily migrates a/b color channels and preserves target luminance/texture.
-- Manual image adjustments for brightness, contrast, saturation, hue, exposure, shadows, highlights, white balance, color temperature, color strength, and texture preservation.
-- Single, left/right, and split comparison preview modes.
-- Single image download.
-- Batch ZIP download.
-- Original / 2K / 4K export with aspect-ratio preservation.
+1. A reference mask defines the color source.
+2. A target mask defines where processing is allowed.
+3. ROI can narrow recognition for difficult images.
+4. AI or remote-provider output is evaluated before use.
+5. Risky masks can be blocked instead of silently accepted.
+6. Users can refine or replace masks manually.
+7. Mask / ROI changes invalidate stale processed results before export reuse.
+8. Color transfer operates only on the confirmed garment region.
 
-## Frontend Setup
+Multimodal analysis is advisory. It may suggest garment categories, risk tags, or ROI information, but it does not bypass segmentation safety gates or directly authorize final color transfer.
 
-Install frontend dependencies:
+## Quick Start
+
+### Frontend
+
+Requirements: a recent Node.js / npm environment.
 
 ```bash
+git clone https://github.com/KevinYoungsir/clothing-color-match.git
+cd clothing-color-match
 npm install
-```
-
-Create a local frontend environment file when using the remote AI server:
-
-```txt
-VITE_AI_SEGMENTATION_API=http://localhost:8000/segment-garment
-VITE_AI_SEGMENTATION_TIMEOUT_MS=60000
-```
-
-Run the frontend:
-
-```bash
 npm run dev
 ```
 
-The Vite URL is usually:
+The Vite development server is typically available at:
 
-```txt
+```text
 http://localhost:5173
 ```
 
-Restart `npm run dev` after changing `.env` or `.env.local`.
+The frontend can be used without a remote AI server through manual-mask and supported local/fallback paths.
 
-## Backend AI Server Setup
+## Optional FastAPI AI Server
 
-The backend lives in `ai-server/` and is a FastAPI service.
-
-Create and activate a Python 3.11 or 3.12 virtual environment:
+The backend lives in `ai-server/` and is intended for Python 3.11 or 3.12.
 
 ```powershell
-cd "D:\Color Calibration\ai-server"
+cd ai-server
 py -3.12 -m venv .venv
 .venv\Scripts\activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-For real lightweight ONNX inference, install the optional lightweight dependency set:
+For the lightweight ONNX path:
 
 ```powershell
 pip install -r requirements-lightweight.txt
 ```
 
-Start the AI server in lightweight mode:
+Example lightweight configuration:
 
 ```powershell
 $env:AI_SEGMENTER="lightweight"
@@ -111,152 +152,67 @@ $env:AI_LIGHTWEIGHT_TARGET_NORMALIZATION="imagenet"
 uvicorn main:app --reload --port 8000
 ```
 
-Check the server:
+Check the service:
 
 ```powershell
 curl.exe http://localhost:8000/health
 ```
 
-`GET /segment-garment` in a browser returns Method Not Allowed because the endpoint expects `POST` image uploads.
+Frontend configuration for the remote segmentation endpoint:
 
-## Model Setup
-
-Real model files are not included in the repository.
-
-Recommended local model path:
-
-```txt
-ai-server/models/model.onnx
-```
-
-You can also keep the model outside the repo and point to it with:
-
-```powershell
-$env:AI_LIGHTWEIGHT_MODEL_PATH="D:\path\to\model.onnx"
-```
-
-Model files must not be committed. Keep these local:
-
-- `ai-server/models/`
-- `*.onnx`
-- `*.pt`
-- `*.pth`
-- `*.safetensors`
-- `*.ckpt`
-- `*.engine`
-- `*.bin`
-
-## Environment Variables
-
-Frontend:
-
-```txt
+```text
 VITE_AI_SEGMENTATION_API=http://localhost:8000/segment-garment
 VITE_AI_SEGMENTATION_TIMEOUT_MS=60000
 VITE_MULTIMODAL_ANALYSIS_API=http://localhost:8000/analyze-garment
 ```
 
-Backend:
+Restart the Vite server after changing `.env` or `.env.local`.
+
+## Model Setup
+
+Real model files are intentionally not included in the repository.
+
+Recommended local path:
+
+```text
+ai-server/models/model.onnx
+```
+
+Or point to another local path:
 
 ```powershell
-$env:AI_SEGMENTER="lightweight"
-$env:AI_LIGHTWEIGHT_MODEL_PATH="models\model.onnx"
-$env:AI_LIGHTWEIGHT_CLOTHING_LABELS="4,5,6,7"
-$env:AI_LIGHTWEIGHT_INPUT_SIZE="512"
-$env:AI_LIGHTWEIGHT_MASK_THRESHOLD="0.55"
-$env:AI_LIGHTWEIGHT_MASK_GAMMA="1.4"
-$env:AI_LIGHTWEIGHT_MASK_BLUR="4"
-$env:AI_LIGHTWEIGHT_KEEP_COMPONENTS="2"
-$env:AI_LIGHTWEIGHT_MIN_COMPONENT_RATIO="0.002"
-$env:AI_LIGHTWEIGHT_TARGET_NORMALIZATION="imagenet"
-$env:AI_MASK_ROI_PADDING_RATIO="0.08"
+$env:AI_LIGHTWEIGHT_MODEL_PATH="D:\path\to\model.onnx"
 ```
 
-The multimodal analysis UI defaults to the deterministic `mock` provider and does not need a key. The `external` provider skeleton reads configuration only from the backend process environment:
+Do not commit model binaries or local generated artifacts. Examples include:
 
-```powershell
-$env:MULTIMODAL_AI_PROVIDER="external"
-$env:MULTIMODAL_AI_API_KEY="<local-only>"
-$env:MULTIMODAL_AI_BASE_URL="<optional>"
-$env:MULTIMODAL_AI_MODEL="<optional>"
-$env:MULTIMODAL_AI_TIMEOUT_SECONDS="30"
+```text
+ai-server/models/
+ai-server/test-assets/
+ai-server/debug/
+*.onnx
+*.pt
+*.pth
+*.safetensors
+*.ckpt
+*.engine
+*.bin
 ```
 
-Do not put `MULTIMODAL_AI_API_KEY` in Vite variables, frontend source, Git, or Electron resources. The current external provider performs no network request; missing or unavailable configuration returns a safe failure and directs the user to the local AI mask or manual mask.
+## Optional Multimodal / Provider Integration
 
-The optional `runninghub` provider keeps its legacy workflow/app adapter branches network-disabled until their contracts are configured. Its `llm_vlm` branch is a real OpenAI-compatible advisory provider. All `RUNNINGHUB_*` configuration remains backend-only; no RunningHub Key belongs in frontend configuration, Electron resources, Git, README examples, or logs.
+The backend includes provider abstractions for advisory multimodal analysis and garment-mask experimentation. Secrets must remain in backend process environment variables and must never be embedded in frontend code, Electron resources, Git history, screenshots, or logs.
 
-RunningHub also supports `RUNNINGHUB_MODEL_TYPE=llm_vlm` for the OpenAI-compatible Vision endpoint. This mode defaults to `https://llm.runninghub.cn/v1` with model `qwen/qwen3.7-plus`, does not require workflow/app/node configuration, and remains disabled unless the backend process explicitly sets `RUNNINGHUB_ENABLE_REAL_CALL=true`. The Key never enters Vite, Electron, Git, or frontend storage; VLM output remains advice that must be confirmed through the existing ROI / mask flow.
+The RunningHub OpenAI-compatible VLM path is documented in:
 
-Use `ai-server/scripts/verify_runninghub_llm_vlm.py` to validate ready, missing-Key, malformed-JSON, timeout, and success behavior without a real Key or network request. See `docs/runninghub-llm-vlm-integration.md` for setup and failure handling.
+- [`docs/runninghub-llm-vlm-integration.md`](docs/runninghub-llm-vlm-integration.md)
+- [`docs/runninghub-live-verification.md`](docs/runninghub-live-verification.md)
+- [`docs/runninghub-vlm-multi-sample-regression.md`](docs/runninghub-vlm-multi-sample-regression.md)
+- [`docs/runninghub-ai-mask-pipeline.md`](docs/runninghub-ai-mask-pipeline.md)
 
-The RunningHub `llm_vlm` path has also completed a sanitized real-call validation. Natural-language categories and risk tags are normalized into stable internal identifiers while their raw values remain available for diagnostics. The result is still advisory: the frontend and Electron never store the Key, and users must confirm ROI / mask before color transfer. See `docs/runninghub-live-verification.md`.
+Provider output remains advisory unless it passes through the existing user-confirmed ROI / mask flow.
 
-Use `ai-server/scripts/run_runninghub_vlm_regression.py` for a sanitized 5-10 image regression. Its default dry-run mode sends no requests; real calls require explicit `--live` plus backend-only environment configuration. Generated JSON and source images must remain outside Git. See `docs/runninghub-vlm-multi-sample-regression.md`.
-
-`/generate-garment-mask` is the AI mask pipeline scaffold. Phase 1 uses a `mock_mask` provider to return an editable mask PNG and a `runninghub_mask` skeleton that fails safely until a real RunningHub segmentation workflow is configured. See `docs/runninghub-ai-mask-pipeline.md`.
-
-Optional debug output:
-
-```powershell
-$env:AI_DEBUG_SAVE_MASKS="1"
-```
-
-Debug files are written under `ai-server/debug/` and must remain untracked.
-
-## AI Mask, ROI, And Manual Mask Flow
-
-- Reference masks define the garment color source.
-- Target masks define where color transfer is allowed.
-- Manual masks are always available and are the safest correction path for hard cases.
-- Remote AI masks are requested through `VITE_AI_SEGMENTATION_API`.
-- Target requests carry `debugRole: "target"` and `sampleId`.
-- ROI / promptBox narrows target recognition and enables ROI-first inference in the backend.
-- Low-quality target masks are blocked with qualities such as `partial`, `low_confidence`, `over_coverage`, or `roi_too_wide`.
-- Blocked or failed target masks must not enter `colorTransfer`.
-- If a target mask is blocked, the user should adjust ROI or manually edit the mask.
-
-## Color Transfer Safety
-
-`colorTransfer` only operates on valid mask pixels in garment mode:
-
-- Missing target mask in non-full-image mode throws instead of processing the whole image.
-- Mask size mismatch throws.
-- Pixels with mask alpha / weight `0` are not modified.
-- Reference and target masks are checked before Lab transfer.
-- ROI / mask edits clear old processed and adjusted results so batch export does not reuse stale output.
-
-## Development Workflow
-
-Typical local remote-AI workflow uses two terminals.
-
-Backend terminal:
-
-```powershell
-cd "D:\Color Calibration\ai-server"
-.venv\Scripts\activate
-$env:AI_SEGMENTER="lightweight"
-$env:AI_LIGHTWEIGHT_MODEL_PATH="models\model.onnx"
-$env:AI_LIGHTWEIGHT_CLOTHING_LABELS="4,5,6,7"
-$env:AI_LIGHTWEIGHT_INPUT_SIZE="512"
-$env:AI_LIGHTWEIGHT_TARGET_NORMALIZATION="imagenet"
-uvicorn main:app --reload --port 8000
-```
-
-Frontend terminal:
-
-```powershell
-cd "D:\Color Calibration"
-npm run dev
-```
-
-Then open:
-
-```txt
-http://localhost:5173
-```
-
-## Validation Commands
+## Validation
 
 Frontend build:
 
@@ -270,107 +226,75 @@ Export verification:
 npm run verify:export
 ```
 
-Backend syntax check:
+Backend syntax check example:
 
 ```powershell
 cd ai-server
 .venv\Scripts\python.exe -m py_compile main.py segmenters\lightweight_segmenter.py segmenters\onnx_utils.py
 ```
 
-Backend environment and model checks:
+Additional backend verification utilities are available under `ai-server/scripts/`.
 
-```powershell
-cd ai-server
-python scripts/check_environment.py
-python scripts/inspect_onnx_model.py --model-path "models\model.onnx"
-python scripts/verify_lightweight.py --model-path "models\model.onnx"
-```
+`npm run verify:export` currently checks behavior including:
 
-Real image mask verification:
+- download naming and JPEG output
+- ZIP structure and filenames
+- missing-mask batch skip behavior
+- original export dimensions
+- 2K long edge at `2048`
+- 4K long edge at `4096`
+- aspect-ratio preservation
 
-```powershell
-python scripts\verify_lightweight_image.py `
-  --model-path "models\model.onnx" `
-  --image-path "test-assets\sample-garment.jpg" `
-  --labels 4,5,6,7 `
-  --output "debug\lightweight-mask.png"
-```
+The release-acceptance checklist is maintained at:
 
-## Export Verification
-
-`npm run verify:export` checks:
-
-- Single download naming and JPEG output.
-- ZIP structure and filenames.
-- Missing-mask batch skip behavior.
-- Original export dimensions.
-- 2K long edge at `2048`.
-- 4K long edge at `4096`.
-- Aspect-ratio preservation.
-
-## Safety Notes
-
-- Do not weaken ROI safety gates to make a case pass.
-- Difficult cases may correctly return `partial`, `low_confidence`, `over_coverage`, or `roi_too_wide`.
-- A safe failure is preferable to an incorrect color transfer.
-- Hanger, metal clip, edge-touching, complex background, and closeup images still need human review when masks are visually ambiguous.
-- No-ROI success on high-risk images should be manually inspected before production export.
-- If a result looks wrong, edit the mask manually instead of forcing AI success.
-- Multimodal analysis provides category, risk, and ROI suggestions only. It never writes the final mask or directly enters color transfer.
-- AI mask generation can write an editable target mask only after the user clicks "应用 AI 蒙版"; it still does not trigger color transfer or export automatically.
+- [`docs/e2e-release-acceptance-checklist.md`](docs/e2e-release-acceptance-checklist.md)
 
 ## Known Limitations
 
-- Full browser E2E with live FastAPI, real `model.onnx`, real uploads, ROI drawing, previews, and downloaded images still needs manual release verification.
-- The current model and label map are local assumptions; another model may require different labels or preprocessing.
-- The app does not include project save / restore, cloud storage, or collaboration.
-- Current export output is JPEG; PNG/WebP export options are not implemented.
-- Batch processing still runs in the browser and can have memory pressure on very large images.
-- 2K / 4K upscaling preserves aspect ratio but cannot create real detail beyond the source image.
+- Real browser E2E with live FastAPI, local models, uploads, ROI editing, visual comparison, and downloaded outputs still benefits from manual release verification.
+- Segmentation quality depends on the model, labels, preprocessing, image composition, and garment category.
+- Hangers, metal clips, edge-touching garments, closeups, and complex backgrounds may require manual mask correction.
+- The repository does not ship model weights.
+- Project save/restore, cloud storage, and collaboration are not implemented.
+- Current export output is JPEG; PNG/WebP export options are not yet implemented.
+- Very large browser-side batches may create memory pressure.
+- 2K / 4K resizing cannot create genuine source detail that was not present in the original image.
 
-## Git Ignore / Do Not Commit
+## Contributing
 
-Do not commit:
+Contributions are welcome, especially around segmentation quality, difficult-case mask handling, color-transfer fidelity, performance, tests, documentation, accessibility, and packaging.
 
-- `.env.local`
-- `dist/`
-- `node_modules/`
-- `ai-server/.venv/`
-- `ai-server/models/`
-- `ai-server/test-assets/`
-- `ai-server/debug/`
-- `*.onnx`
-- `*.pt`
-- `*.pth`
-- `*.safetensors`
-- `*.ckpt`
-- `*.engine`
-- `*.bin`
-- `__pycache__/`
-- `*.pyc`
+Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a substantial pull request.
 
-## Release Acceptance Status
+Good first contribution areas include:
 
-Latest release acceptance checklist:
+- improving docs and setup clarity
+- adding reproducible regression cases using non-sensitive assets
+- improving mask-quality diagnostics
+- profiling large-image or batch performance
+- improving accessibility and localization
+- evaluating model-agnostic segmentation adapters
 
-- `docs/e2e-release-acceptance-checklist.md`
+## Security
 
-Current validation baseline:
+Please read [`SECURITY.md`](SECURITY.md) before reporting a vulnerability. Do not publish real API keys, access tokens, private customer images, or sensitive local paths in issues or pull requests.
 
-- `npm run build`
-- `npm run verify:export`
-- Backend `py_compile` for key AI server files
+## Community
 
-Before a release, also run a manual browser E2E pass with:
-
-1. Frontend on `http://localhost:5173`.
-2. FastAPI server on `http://localhost:8000`.
-3. Local ONNX model at `ai-server/models/model.onnx` or a configured external path.
-4. Representative white-background, hanger, closeup, edge-touching, and complex-background images.
-5. Manual inspection of masks, previews, and downloaded files.
+Project interactions are governed by [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
 ## Deployment
 
-The frontend can still be deployed as a Vite static app to Vercel, Netlify, or GitHub Pages. Remote AI segmentation requires a separately deployed FastAPI service and a configured `VITE_AI_SEGMENTATION_API`.
+The frontend can be deployed as a Vite static application to services such as Vercel, Netlify, or GitHub Pages. Remote AI segmentation requires a separately available FastAPI backend and a configured `VITE_AI_SEGMENTATION_API`.
 
-For static-only deployments without the AI server, users can still use manual masks and safe traditional segmentation paths, but real ONNX remote-AI segmentation will not be available.
+A static-only deployment can still support workflows that do not require the remote ONNX segmentation service.
+
+## Project Status
+
+This is an actively developed open-source project. The current positioning is **AI-assisted recognition + human-confirmed mask workflow**, not fully automatic garment recognition.
+
+The project prioritizes reproducibility, explicit safety boundaries, and product-detail preservation over forcing every image through an automatic AI path.
+
+## License
+
+Licensed under the [MIT License](LICENSE).
